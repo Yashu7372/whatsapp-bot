@@ -1,0 +1,20 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: whatsapp-bot-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-whatsapp_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-whatsapp_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whatsapp_bot}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - whatsapp_bot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-whatsapp_bot} -d ${POSTGRES_DB:-whatsapp_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  whatsapp_bot_pgdata:

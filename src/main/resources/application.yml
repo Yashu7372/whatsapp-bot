@@ -1,0 +1,46 @@
+spring:
+  application:
+    name: whatsapp-bot-phase1
+
+  threads:
+    virtual:
+      enabled: true
+
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+
+server:
+  port: ${SERVER_PORT:8080}
+
+whatsapp:
+  verify-token: ${WHATSAPP_VERIFY_TOKEN}
+  graph-api-version: ${WHATSAPP_GRAPH_API_VERSION:v19.0}
+  fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
+  mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
+
+gemini:
+  api:
+    key: ${GEMINI_API_KEY}
+
+logging:
+  level:
+    com.whatsappbot: INFO
+    org.flywaydb: INFO
+    org.hibernate.SQL: WARN
+
+app:
+  knowledge:
+    rebuild-on-startup: ${KNOWLEDGE_REBUILD_ON_STARTUP:false}
