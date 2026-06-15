@@ -6,6 +6,8 @@ import com.whatsappbot.domain.tenant.TenantEntity;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -37,6 +39,7 @@ public class WhatsappOrderEntity {
     @Column(name = "catalog_id")
     private String catalogId;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "order_payload", columnDefinition = "jsonb", nullable = false)
     private String orderPayload;
 
