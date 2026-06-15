@@ -20,6 +20,7 @@
     <properties>
         <java.version>21</java.version>
         <langchain4j.version>1.0.0</langchain4j.version>
+        <cloud-sql-connector.version>1.17.0</cloud-sql-connector.version>
     </properties>
 
     <dependencyManagement>
@@ -35,6 +36,7 @@
     </dependencyManagement>
 
     <dependencies>
+        <!-- ── Spring Boot ────────────────────────────────────────────────── -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-web</artifactId>
@@ -52,10 +54,28 @@
             <artifactId>spring-boot-starter-webflux</artifactId>
         </dependency>
         <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-actuator</artifactId>
+        </dependency>
+
+        <!-- ── Database ───────────────────────────────────────────────────── -->
+        <dependency>
             <groupId>org.postgresql</groupId>
             <artifactId>postgresql</artifactId>
             <scope>runtime</scope>
         </dependency>
+
+        <!--
+          Cloud SQL Socket Factory — replaces TCP connection in production.
+          Allows Cloud Run to connect to Cloud SQL via Unix socket (no VPC needed).
+        -->
+        <dependency>
+            <groupId>com.google.cloud.sql</groupId>
+            <artifactId>postgres-socket-factory</artifactId>
+            <version>${cloud-sql-connector.version}</version>
+        </dependency>
+
+        <!-- ── Flyway ─────────────────────────────────────────────────────── -->
         <dependency>
             <groupId>org.flywaydb</groupId>
             <artifactId>flyway-core</artifactId>
@@ -65,26 +85,28 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
+        <!-- ── LangChain4j ────────────────────────────────────────────────── -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-spring-boot-starter</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-google-ai-gemini</artifactId>
+            <artifactId>langchain4j-vertex-ai-gemini</artifactId>
         </dependency>
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-embeddings-all-minilm-l6-v2</artifactId>
         </dependency>
 
-
+        <!-- ── Lombok ─────────────────────────────────────────────────────── -->
         <dependency>
             <groupId>org.projectlombok</groupId>
             <artifactId>lombok</artifactId>
             <optional>true</optional>
         </dependency>
 
+        <!-- ── Test ───────────────────────────────────────────────────────── -->
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
