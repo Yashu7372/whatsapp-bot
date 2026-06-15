@@ -12,4 +12,5 @@ import java.time.Instant;
 import java.util.UUID;
 
 @Entity
-@Table
+@Table(name = "knowledge_documents")
+@Getter
