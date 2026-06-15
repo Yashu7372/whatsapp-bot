@@ -4,7 +4,7 @@ steps:
     args:
       - build
       - -t
-      - "me-central1-docker.pkg.dev/$PROJECT_ID/whatsapp-bot-repo/whatsapp-bot:$COMMIT_SHA"
+      - "me-central1-docker.pkg.dev/$PROJECT_ID/whatsapp-bot-repo/whatsapp-bot:$BUILD_ID"
       - -t
       - "me-central1-docker.pkg.dev/$PROJECT_ID/whatsapp-bot-repo/whatsapp-bot:latest"
       - .
@@ -22,7 +22,7 @@ steps:
       - run
       - deploy
       - whatsapp-bot
-      - --image=me-central1-docker.pkg.dev/$PROJECT_ID/whatsapp-bot-repo/whatsapp-bot:$COMMIT_SHA
+      - --image=me-central1-docker.pkg.dev/$PROJECT_ID/whatsapp-bot-repo/whatsapp-bot:$BUILD_ID
       - --region=me-central1
       - --platform=managed
       - --allow-unauthenticated
