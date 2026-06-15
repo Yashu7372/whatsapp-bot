@@ -33,7 +33,7 @@ whatsapp:
 
 gemini:
   project: ${GCP_PROJECT_ID:whatsapp-bot-yash-2025}
-  location: ${GCP_REGION:me-central1}
+  location: ${GEMINI_REGION:us-central1}
   api:
     model: ${GEMINI_MODEL:gemini-2.5-flash}
 

@@ -37,7 +37,7 @@ whatsapp:
 
 gemini:
   project: ${GCP_PROJECT_ID}
-  location: ${GCP_REGION}
+  location: ${GEMINI_REGION}
   api:
     model: ${GEMINI_MODEL:gemini-2.5-flash}
 
