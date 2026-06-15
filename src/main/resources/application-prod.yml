@@ -1,0 +1,62 @@
+# src/main/resources/application-prod.yml
+# Active when SPRING_PROFILES_ACTIVE=prod (set in Cloud Run env var)
+# All sensitive values are injected via Secret Manager secrets mounted as env vars.
+
+spring:
+  datasource:
+    url: ${DB_URL}
+    username: ${DB_USERNAME}
+    password: ${DB_PASSWORD}
+    hikari:
+      minimum-idle: 2
+      maximum-pool-size: 10
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+
+server:
+  port: ${PORT:8080}   # Cloud Run injects $PORT
+
+whatsapp:
+  verify-token: ${WHATSAPP_VERIFY_TOKEN}
+  graph-api-version: ${WHATSAPP_GRAPH_API_VERSION:v19.0}
+  fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
+  mock-send-enabled: false
+
+gemini:
+  project: ${GCP_PROJECT_ID}
+  location: ${GCP_REGION}
+  api:
+    model: ${GEMINI_MODEL:gemini-2.5-flash}
+
+logging:
+  level:
+    com.whatsappbot: INFO
+    org.flywaydb: INFO
+    org.hibernate.SQL: WARN
+    com.zaxxer.hikari: WARN
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+app:
+  knowledge:
+    rebuild-on-startup: false
