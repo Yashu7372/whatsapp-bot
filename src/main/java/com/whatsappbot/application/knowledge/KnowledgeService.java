@@ -34,7 +34,7 @@ public class KnowledgeService {
                 request.metadata() == null || request.metadata().isBlank() ? "{}" : request.metadata()
         );
 
-        KnowledgeDocument saved = documentRepository.save(document);
+        KnowledgeDocument saved = documentRepository.saveAndFlush(document);
         List<String> chunks = textChunker.chunk(request.content());
         vectorStore.replaceDocumentEmbeddings(tenant.getId(), saved.getId(), chunks, saved.getMetadata());
         return saved.getId();
