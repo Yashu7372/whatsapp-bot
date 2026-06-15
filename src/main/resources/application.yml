@@ -32,8 +32,10 @@ whatsapp:
   mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
 
 gemini:
+  project: ${GCP_PROJECT_ID:whatsapp-bot-yash-2025}
+  location: ${GCP_REGION:me-central1}
   api:
-    key: ${GEMINI_API_KEY}
+    model: ${GEMINI_MODEL:gemini-2.5-flash}
 
 logging:
   level:
