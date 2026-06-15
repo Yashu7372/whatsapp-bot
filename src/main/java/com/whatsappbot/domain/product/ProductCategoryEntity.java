@@ -4,6 +4,8 @@ import com.whatsappbot.domain.tenant.TenantEntity;
 import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.util.UUID;
 
@@ -42,6 +44,7 @@ public class ProductCategoryEntity {
     @Column(name = "inventory_count")
     private Integer inventoryCount;
 
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(name = "metadata", columnDefinition = "jsonb")
     private String metadata;
 
