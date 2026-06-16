@@ -36,7 +36,7 @@ public class AutomobileServiceTools {
     private final ServiceRecordRepository serviceRecordRepository;
     private final ServiceAppointmentRepository appointmentRepository;
 
-    @Tool("Look up an automobile service customer by phone number. Returns customer name, vehicles, and latest service details.")
+    @Tool("Look up an automobile service customer. Pass null or empty phone to use the current customer (resolved from context automatically). Returns customer name, vehicles, and latest service details.")
     @Transactional(readOnly = true)
     public String lookupCustomerByPhone(String phone) {
         TenantExecutionContext.Context context = TenantExecutionContext.getRequired();
@@ -47,7 +47,7 @@ public class AutomobileServiceTools {
         return summarizeCustomer(context.tenant(), customer.get());
     }
 
-    @Tool("List all registered vehicles for an automobile service customer phone number.")
+    @Tool("List all registered vehicles for an automobile service customer. Pass null or empty customerPhone to use the current customer (resolved from context automatically).")
     @Transactional(readOnly = true)
     public String listCustomerVehicles(String customerPhone) {
         TenantExecutionContext.Context context = TenantExecutionContext.getRequired();
@@ -86,7 +86,7 @@ public class AutomobileServiceTools {
         return result.toString().trim();
     }
 
-    @Tool("Get recent service history across all vehicles for an automobile service customer phone number.")
+    @Tool("Get recent service history across all vehicles for a customer. Pass null or empty customerPhone to use the current customer (resolved from context automatically).")
     @Transactional(readOnly = true)
     public String getCustomerServiceHistory(String customerPhone) {
         TenantExecutionContext.Context context = TenantExecutionContext.getRequired();
@@ -120,7 +120,7 @@ public class AutomobileServiceTools {
         return result.append("Use bookAppointment with exact date and timeSlot to reserve.").toString().trim();
     }
 
-    @Tool("Book an automobile service appointment. Requires customer phone, plate number, service type, date yyyy-MM-dd, exact time slot, and customer name.")
+    @Tool("Book an automobile service appointment. Pass null or empty customerPhone to use the current customer's number (resolved from context automatically). Requires plate number, service type, date yyyy-MM-dd, exact time slot, and customer name.")
     @Transactional
     public String bookAppointment(String customerPhone,
                                   String plateNumber,

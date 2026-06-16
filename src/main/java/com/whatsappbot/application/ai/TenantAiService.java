@@ -9,11 +9,16 @@ import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.infrastructure.ai.WhatsAppAgent;
 import com.whatsappbot.infrastructure.tenant.TenantContext;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class TenantAiService {
+
+    private static final String AI_FALLBACK_REPLY =
+            "Sorry, I'm having a brief technical issue. Please resend your message in a moment.";
 
     private static final String GLOBAL_GUARDRAILS = """
             Platform rules:
@@ -43,10 +48,15 @@ public class TenantAiService {
             TenantContext.setTenantId(tenant.getId());
             TenantExecutionContext.set(tenant, contact, conversation, customerPhoneNumber);
             return whatsAppAgent.chat(
+                    conversation.getId().toString(),
                     systemPrompt,
                     contact.getWaId(),
                     userMessage
             );
+        } catch (Exception e) {
+            log.error("AI reply generation failed. tenant={}, conversation={}",
+                    tenant.getId(), conversation.getId(), e);
+            return AI_FALLBACK_REPLY;
         } finally {
             TenantExecutionContext.clear();
             TenantContext.clear();

@@ -1,5 +1,6 @@
 package com.whatsappbot.infrastructure.ai;
 
+import dev.langchain4j.service.MemoryId;
 import dev.langchain4j.service.SystemMessage;
 import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.V;
@@ -23,6 +24,12 @@ public interface WhatsAppAgent {
         - Location request: delivery address or nearest branch.
         - Approved templates: notifications outside normal service conversation or predefined business messages.
 
+        Customer identity policy:
+        The current customer's phone number and identity are always already known from the WhatsApp platform.
+        Never ask the customer for their own phone number. When calling any tool that accepts a phone parameter,
+        pass null — the tool resolves it from context automatically. Only ask for a phone number if the
+        conversation is explicitly about a different person (e.g. "book this for my wife's car too").
+
         For automobile tenants, use the automobile tools to look up customers, vehicles, service history,
         available appointment slots, booking details, and cancellations. Do not invent service history or slot availability.
 
@@ -31,6 +38,7 @@ public interface WhatsAppAgent {
         Keep text short and suitable for WhatsApp.
         """)
     String chat(
+            @MemoryId String conversationId,
             @V("systemPrompt") String systemPrompt,
             @V("customerWhatsappId") String customerWhatsappId,
             @UserMessage String userMessage
