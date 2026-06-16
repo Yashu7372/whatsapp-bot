@@ -6,5 +6,6 @@ public enum BusinessType {
     RETAIL,
     CLINIC,
     SALON,
-    GENERAL_SUPPORT
+    GENERAL_SUPPORT,
+    AUTOMOBILE
 }

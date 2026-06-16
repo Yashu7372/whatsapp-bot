@@ -9,9 +9,11 @@ import com.whatsappbot.domain.message.MessageRepository;
 import com.whatsappbot.domain.message.MessageType;
 import com.whatsappbot.domain.tenant.TenantEntity;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class ConversationService {
@@ -29,6 +31,11 @@ public class ConversationService {
                                                       MessageType messageType,
                                                       String textBody,
                                                       String rawPayload) {
+
+        if (waMessageId != null && !waMessageId.isBlank() && messageRepository.existsByWaMessageId(waMessageId)) {
+            log.debug("Duplicate inbound WhatsApp message skipped before processing. waMessageId={}", waMessageId);
+            return null;
+        }
 
         // 1. Fetch or create the contact
         ContactEntity contact = contactRepository.findByTenantAndWaId(tenant, waId)
@@ -52,7 +59,7 @@ public class ConversationService {
 
         // 5. Use the saved entities to create the message
         Message inbound = Message.inbound(tenant, savedConversation, waMessageId, messageType, textBody, rawPayload);
-        messageRepository.save(inbound);
+        messageRepository.saveAndFlush(inbound);
 
         return new ConversationContext(savedContact, savedConversation);
     }
