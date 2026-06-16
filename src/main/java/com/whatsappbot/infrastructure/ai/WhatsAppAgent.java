@@ -5,7 +5,7 @@ import dev.langchain4j.service.UserMessage;
 import dev.langchain4j.service.V;
 import dev.langchain4j.service.spring.AiService;
 
-@AiService(tools = {"whatsAppTemplateTools", "whatsappNativeInteractiveTools"})
+@AiService(tools = {"whatsAppTemplateTools", "whatsappNativeInteractiveTools", "automobileServiceTools"})
 public interface WhatsAppAgent {
 
     @SystemMessage("""
@@ -22,8 +22,9 @@ public interface WhatsAppAgent {
         - Flow: booking, address capture, lead form, checkout, real estate viewing request.
         - Location request: delivery address or nearest branch.
         - Approved templates: notifications outside normal service conversation or predefined business messages.
+        - Automobile service tools: returning customer lookup, vehicle service history, due-service guidance, and appointment booking.
 
-        Do not invent products, prices, offers, availability, booking slots, policies, or payment links.
+        Do not invent products, prices, offers, availability, booking slots, policies, service history, vehicle details, or payment links.
         If human help is needed, ask for handoff or update the conversation state through the application layer.
         Keep text short and suitable for WhatsApp.
         """)

@@ -9,5 +9,7 @@ public enum DocumentType {
     DELIVERY_POLICY,
     REFUND_POLICY,
     BOOKING_RULES,
+    SERVICE_HISTORY,
+    VEHICLE_INFO,
     GENERAL
 }

@@ -30,6 +30,11 @@ public class ConversationService {
                                                       String textBody,
                                                       String rawPayload) {
 
+        if (waMessageId != null && !waMessageId.isBlank()
+                && messageRepository.existsByTenantAndWaMessageId(tenant, waMessageId)) {
+            return null;
+        }
+
         // 1. Fetch or create the contact
         ContactEntity contact = contactRepository.findByTenantAndWaId(tenant, waId)
                 .orElseGet(() -> ContactEntity.create(tenant, waId, phoneNumber, displayName));

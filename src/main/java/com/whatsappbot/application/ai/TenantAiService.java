@@ -1,5 +1,6 @@
 package com.whatsappbot.application.ai;
 
+import com.whatsappbot.application.context.TenantExecutionContext;
 import com.whatsappbot.application.knowledge.KnowledgeService;
 import com.whatsappbot.application.template.WhatsAppTemplateService;
 import com.whatsappbot.domain.contact.ContactEntity;
@@ -40,12 +41,14 @@ public class TenantAiService {
 
         try {
             TenantContext.setTenantId(tenant.getId());
+            TenantExecutionContext.set(tenant, contact, conversation, customerPhoneNumber);
             return whatsAppAgent.chat(
                     systemPrompt,
                     contact.getWaId(),
                     userMessage
             );
         } finally {
+            TenantExecutionContext.clear();
             TenantContext.clear();
         }
     }

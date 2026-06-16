@@ -47,6 +47,12 @@ public class WebhookApplicationService {
                 inbound.rawPayload()
         );
 
+        if (context == null) {
+            log.debug("Duplicate WhatsApp webhook skipped. tenant={}, waMessageId={}",
+                    tenant.getTenantCode(), inbound.waMessageId());
+            return;
+        }
+
         ConversationEntity conversation = context.conversationEntity();
         log.info("Inbound WhatsApp message. tenant={}, conversation={}, type={}",
                 tenant.getTenantCode(), conversation.getId(), inbound.messageType());
