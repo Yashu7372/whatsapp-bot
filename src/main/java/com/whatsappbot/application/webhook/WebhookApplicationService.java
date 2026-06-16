@@ -11,6 +11,7 @@ import com.whatsappbot.infrastructure.whatsapp.WhatsAppInboundMessage;
 import com.whatsappbot.infrastructure.whatsapp.WhatsAppWebhookParser;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
 @Slf4j
@@ -36,16 +37,27 @@ public class WebhookApplicationService {
 
     private void handleMessage(WhatsAppInboundMessage inbound) {
         TenantEntity tenant = tenantService.resolveActiveTenant(inbound.phoneNumberId());
-        ConversationService.ConversationContext context = conversationService.registerInboundMessage(
-                tenant,
-                inbound.fromWaId(),
-                inbound.fromPhoneNumber(),
-                inbound.displayName(),
-                inbound.waMessageId(),
-                inbound.messageType(),
-                inbound.textBody(),
-                inbound.rawPayload()
-        );
+        ConversationService.ConversationContext context;
+        try {
+            context = conversationService.registerInboundMessage(
+                    tenant,
+                    inbound.fromWaId(),
+                    inbound.fromPhoneNumber(),
+                    inbound.displayName(),
+                    inbound.waMessageId(),
+                    inbound.messageType(),
+                    inbound.textBody(),
+                    inbound.rawPayload()
+            );
+        } catch (DataIntegrityViolationException ex) {
+            log.debug("Duplicate webhook message skipped by database constraint. waMessageId={}", inbound.waMessageId());
+            return;
+        }
+
+        if (context == null) {
+            log.debug("Duplicate webhook message skipped. waMessageId={}", inbound.waMessageId());
+            return;
+        }
 
         ConversationEntity conversation = context.conversationEntity();
         log.info("Inbound WhatsApp message. tenant={}, conversation={}, type={}",
