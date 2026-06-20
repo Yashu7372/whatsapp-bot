@@ -46,3 +46,7 @@ logging:
 app:
   knowledge:
     rebuild-on-startup: ${KNOWLEDGE_REBUILD_ON_STARTUP:false}
+
+ai:
+  memory:
+    max-messages: 20
