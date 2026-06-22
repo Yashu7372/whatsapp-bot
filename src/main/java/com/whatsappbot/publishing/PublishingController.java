@@ -2,8 +2,10 @@ package com.whatsappbot.publishing;
 
 import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.domain.tenant.TenantRepository;
+import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDateTime;
@@ -19,14 +21,17 @@ public class PublishingController {
     private final TenantRepository tenantRepository;
 
     @GetMapping
-    public ResponseEntity<List<PublishJobEntity>> listJobs(@RequestParam UUID tenantId) {
+    public ResponseEntity<List<PublishJobEntity>> listJobs(@AuthenticationPrincipal Claims claims) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         return ResponseEntity.ok(publishingService.listJobs(tenantId));
     }
 
     @PostMapping
-    public ResponseEntity<PublishJobEntity> scheduleJob(@RequestBody ScheduleRequest request) {
-        TenantEntity tenant = tenantRepository.findById(request.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + request.tenantId()));
+    public ResponseEntity<PublishJobEntity> scheduleJob(@AuthenticationPrincipal Claims claims,
+                                                         @RequestBody ScheduleRequest request) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        TenantEntity tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + tenantId));
         LocalDateTime scheduledAt = LocalDateTime.parse(request.scheduledAt());
         PublishJobEntity job = publishingService.scheduleJob(
                 tenant, request.contentIdeaId(), request.platformAccountId(),
@@ -34,6 +39,6 @@ public class PublishingController {
         return ResponseEntity.ok(job);
     }
 
-    record ScheduleRequest(UUID tenantId, UUID contentIdeaId, UUID platformAccountId,
+    record ScheduleRequest(UUID contentIdeaId, UUID platformAccountId,
                            String platformCode, String scheduledAt, String contentSnapshot) {}
 }

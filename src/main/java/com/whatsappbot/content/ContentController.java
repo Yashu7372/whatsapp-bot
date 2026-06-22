@@ -2,8 +2,10 @@ package com.whatsappbot.content;
 
 import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.domain.tenant.TenantRepository;
+import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,15 +22,18 @@ public class ContentController {
 
     @GetMapping
     public ResponseEntity<List<ContentIdeaEntity>> listIdeas(
-            @RequestParam UUID tenantId,
+            @AuthenticationPrincipal Claims claims,
             @RequestParam(required = false) UUID campaignId) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         return ResponseEntity.ok(contentGenerationService.listIdeas(tenantId, campaignId));
     }
 
     @PostMapping("/generate")
-    public ResponseEntity<ContentIdeaEntity> generateIdea(@RequestBody GenerateRequest request) {
-        TenantEntity tenant = tenantRepository.findById(request.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + request.tenantId()));
+    public ResponseEntity<ContentIdeaEntity> generateIdea(@AuthenticationPrincipal Claims claims,
+                                                           @RequestBody GenerateRequest request) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        TenantEntity tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + tenantId));
         ContentIdeaEntity idea = contentGenerationService.generateIdea(
                 tenant, request.campaignId(), request.platformCode(), request.contentType(), request.topic());
         return ResponseEntity.ok(idea);
@@ -38,8 +43,7 @@ public class ContentController {
     public ResponseEntity<ContentIdeaEntity> updateStatus(@PathVariable UUID id,
                                                            @RequestBody StatusRequest request) {
         ContentStatus status = ContentStatus.valueOf(request.status().toUpperCase());
-        ContentIdeaEntity updated = contentGenerationService.updateStatus(id, status);
-        return ResponseEntity.ok(updated);
+        return ResponseEntity.ok(contentGenerationService.updateStatus(id, status));
     }
 
     @GetMapping("/{id}/variants")
@@ -47,7 +51,7 @@ public class ContentController {
         return ResponseEntity.ok(contentVariantRepository.findAllByContentIdeaId(id));
     }
 
-    record GenerateRequest(UUID tenantId, UUID campaignId, String platformCode, String contentType, String topic) {}
+    record GenerateRequest(UUID campaignId, String platformCode, String contentType, String topic) {}
 
     record StatusRequest(String status) {}
 }

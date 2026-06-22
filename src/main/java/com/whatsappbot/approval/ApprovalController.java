@@ -2,8 +2,10 @@ package com.whatsappbot.approval;
 
 import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.domain.tenant.TenantRepository;
+import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -18,19 +20,23 @@ public class ApprovalController {
     private final TenantRepository tenantRepository;
 
     @GetMapping
-    public ResponseEntity<List<ApprovalTaskEntity>> listAll(@RequestParam UUID tenantId) {
+    public ResponseEntity<List<ApprovalTaskEntity>> listAll(@AuthenticationPrincipal Claims claims) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         return ResponseEntity.ok(approvalService.listByTenant(tenantId));
     }
 
     @GetMapping("/pending")
-    public ResponseEntity<List<ApprovalTaskEntity>> listPending(@RequestParam UUID tenantId) {
+    public ResponseEntity<List<ApprovalTaskEntity>> listPending(@AuthenticationPrincipal Claims claims) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         return ResponseEntity.ok(approvalService.listPending(tenantId));
     }
 
     @PostMapping
-    public ResponseEntity<ApprovalTaskEntity> createTask(@RequestBody CreateTaskRequest request) {
-        TenantEntity tenant = tenantRepository.findById(request.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + request.tenantId()));
+    public ResponseEntity<ApprovalTaskEntity> createTask(@AuthenticationPrincipal Claims claims,
+                                                          @RequestBody CreateTaskRequest request) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        TenantEntity tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + tenantId));
         return ResponseEntity.ok(approvalService.createTask(tenant, request.contentIdeaId()));
     }
 
@@ -52,7 +58,7 @@ public class ApprovalController {
         return ResponseEntity.ok(approvalService.requestChanges(id, request.reviewedBy(), request.note()));
     }
 
-    record CreateTaskRequest(UUID tenantId, UUID contentIdeaId) {}
+    record CreateTaskRequest(UUID contentIdeaId) {}
 
     record ReviewRequest(String reviewedBy, String note) {}
 }

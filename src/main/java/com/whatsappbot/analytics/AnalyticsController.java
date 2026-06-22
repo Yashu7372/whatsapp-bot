@@ -2,8 +2,10 @@ package com.whatsappbot.analytics;
 
 import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.domain.tenant.TenantRepository;
+import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -19,9 +21,11 @@ public class AnalyticsController {
     private final TenantRepository tenantRepository;
 
     @PostMapping("/ingest")
-    public ResponseEntity<AnalyticsSnapshotEntity> ingest(@RequestBody IngestRequest request) {
-        TenantEntity tenant = tenantRepository.findById(request.tenantId())
-                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + request.tenantId()));
+    public ResponseEntity<AnalyticsSnapshotEntity> ingest(@AuthenticationPrincipal Claims claims,
+                                                           @RequestBody IngestRequest request) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        TenantEntity tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + tenantId));
         AnalyticsSnapshotEntity snapshot = analyticsIngestionService.ingest(
                 tenant, request.publishJobId(), request.platformCode(),
                 request.views(), request.likes(), request.comments(),
@@ -30,10 +34,11 @@ public class AnalyticsController {
     }
 
     @GetMapping("/snapshots")
-    public ResponseEntity<List<AnalyticsSnapshotEntity>> listSnapshots(@RequestParam UUID tenantId) {
+    public ResponseEntity<List<AnalyticsSnapshotEntity>> listSnapshots(@AuthenticationPrincipal Claims claims) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         return ResponseEntity.ok(analyticsSnapshotRepository.findAllByTenantIdOrderByCapturedAtDesc(tenantId));
     }
 
-    record IngestRequest(UUID tenantId, UUID publishJobId, String platformCode,
+    record IngestRequest(UUID publishJobId, String platformCode,
                          long views, long likes, long comments, long shares, long clicks, long leads) {}
 }
