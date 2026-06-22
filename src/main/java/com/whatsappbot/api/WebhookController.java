@@ -1,7 +1,7 @@
 package com.whatsappbot.api;
 
 import com.fasterxml.jackson.databind.JsonNode;
-import com.whatsappbot.application.webhook.WebhookApplicationService;
+import com.whatsappbot.application.webhook.WebhookOutboxService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,7 +22,7 @@ public class WebhookController {
     @Value("${whatsapp.verify-token}")
     private String verifyToken;
 
-    private final WebhookApplicationService webhookApplicationService;
+    private final WebhookOutboxService webhookOutboxService;
 
     @GetMapping
     public ResponseEntity<String> verifyWebhook(
@@ -40,10 +40,10 @@ public class WebhookController {
     @PostMapping
     public ResponseEntity<Void> receiveMessage(@RequestBody JsonNode payload) {
         try {
-            webhookApplicationService.handleIncomingWebhook(payload);
+            webhookOutboxService.enqueue(payload);
         } catch (Exception e) {
-            // Meta expects a 200 quickly. Log internally and avoid repeated webhook retries for app-side failures.
-            log.error("Failed to process WhatsApp webhook", e);
+            // Enqueue failure is logged but still returns 200 — Meta must not retry on our internal errors.
+            log.error("Failed to enqueue inbound WhatsApp webhook payload", e);
         }
         return ResponseEntity.ok().build();
     }

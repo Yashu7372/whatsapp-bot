@@ -46,6 +46,12 @@ logging:
 app:
   knowledge:
     rebuild-on-startup: ${KNOWLEDGE_REBUILD_ON_STARTUP:false}
+  webhook:
+    outbox:
+      poll-interval-ms: ${WEBHOOK_OUTBOX_POLL_INTERVAL_MS:1000}
+      batch-size: ${WEBHOOK_OUTBOX_BATCH_SIZE:5}
+      max-retries: ${WEBHOOK_OUTBOX_MAX_RETRIES:3}
+      stuck-recovery-minutes: ${WEBHOOK_OUTBOX_STUCK_RECOVERY_MINUTES:10}
 
 ai:
   memory:
