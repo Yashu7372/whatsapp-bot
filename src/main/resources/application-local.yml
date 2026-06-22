@@ -1,0 +1,90 @@
+# src/main/resources/application-local.yml
+# Active when SPRING_PROFILES_ACTIVE=local (set in docker-compose.yml / .env)
+#
+# This profile targets the docker-compose Postgres container directly via
+# TCP/JDBC — no Cloud SQL socket factory, no GCP credentials, no Secret
+# Manager. Everything comes from the local .env file (see .env.example).
+
+spring:
+  datasource:
+    url: ${DB_URL:jdbc:postgresql://postgres:5432/whatsapp_bot}
+    username: ${DB_USERNAME:whatsapp_bot}
+    password: ${DB_PASSWORD:whatsapp_bot}
+    hikari:
+      minimum-idle: 1
+      maximum-pool-size: 5
+      connection-timeout: 30000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: true
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+
+server:
+  port: ${SERVER_PORT:8080}
+
+whatsapp:
+  verify-token: ${WHATSAPP_VERIFY_TOKEN}
+  graph-api-version: ${WHATSAPP_GRAPH_API_VERSION:v19.0}
+  fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
+  # Flip to true to log outbound messages instead of calling the real Graph
+  # API — useful before you've set up a Meta test number.
+  mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
+
+# ─── AI provider — local default is Ollama (free, fully local, no API key) ──
+# Override AI_PROVIDER in .env to use GEMINI's free tier, OPENAI, or
+# ANTHROPIC instead. Same env var name as the base profile — this section
+# just changes the *default* so a fresh local clone works with zero paid
+# accounts out of the box, as long as Ollama is reachable.
+ai:
+  provider: ${AI_PROVIDER:OLLAMA}
+  temperature: ${AI_TEMPERATURE:0.0}
+  timeout-seconds: ${AI_TIMEOUT_SECONDS:60}
+  memory-max-messages: ${AI_MEMORY_MAX_MESSAGES:20}
+
+  gemini:
+    api-key: ${AI_GEMINI_API_KEY:}
+    model-name: ${AI_GEMINI_MODEL:gemini-2.5-flash}
+
+  ollama:
+    # "ollama" resolves via the docker-compose service name when the app
+    # itself runs in Docker too. If you instead run Ollama directly on your
+    # host machine (not in Docker) and the app in Docker, use
+    # http://host.docker.internal:11434 instead — see README/.env.example.
+    base-url: ${AI_OLLAMA_BASE_URL:http://ollama:11434}
+    model-name: ${AI_OLLAMA_MODEL:llama3.1:8b}
+
+  openai:
+    api-key: ${AI_OPENAI_API_KEY:}
+    model-name: ${AI_OPENAI_MODEL:gpt-4o-mini}
+
+  anthropic:
+    api-key: ${AI_ANTHROPIC_API_KEY:}
+    model-name: ${AI_ANTHROPIC_MODEL:claude-sonnet-4-5}
+
+logging:
+  level:
+    com.whatsappbot: DEBUG
+    org.flywaydb: INFO
+    org.hibernate.SQL: WARN
+    # TEMPORARY: shows the exact outbound HTTP request/response to Gemini,
+    # including headers, to debug the ACCESS_TOKEN_TYPE_UNSUPPORTED issue.
+    # Remove/raise back to INFO once resolved — this can log request bodies.
+    dev.langchain4j: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+app:
+  knowledge:
+    rebuild-on-startup: ${KNOWLEDGE_REBUILD_ON_STARTUP:false}

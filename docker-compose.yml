@@ -15,6 +15,49 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
+    networks:
+      - whatsapp_bot_net
+
+  # Optional fully-local model runtime. Only needed if AI_PROVIDER=OLLAMA.
+  # Pull a model once with: docker compose exec ollama ollama pull llama3.1:8b
+  ollama:
+    image: ollama/ollama:latest
+    container_name: whatsapp-bot-ollama
+    ports:
+      - "${OLLAMA_PORT:-11434}:11434"
+    volumes:
+      - whatsapp_bot_ollama_data:/root/.ollama
+    networks:
+      - whatsapp_bot_net
+    profiles:
+      - ollama
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: whatsapp-bot-app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-whatsapp_bot}
+      DB_USERNAME: ${POSTGRES_USER:-whatsapp_bot}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-whatsapp_bot}
+      SERVER_PORT: 8080
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    networks:
+      - whatsapp_bot_net
+    restart: unless-stopped
+
+networks:
+  whatsapp_bot_net:
+    driver: bridge
 
 volumes:
   whatsapp_bot_pgdata:
+  whatsapp_bot_ollama_data:

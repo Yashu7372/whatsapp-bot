@@ -1,0 +1,10 @@
+target/
+.idea/
+*.iml
+.env
+.DS_Store
+.git/
+.gitignore
+*.md
+cloudbuild.yaml
+deploy/

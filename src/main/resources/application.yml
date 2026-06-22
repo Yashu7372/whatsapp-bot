@@ -31,11 +31,31 @@ whatsapp:
   fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
   mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
 
-gemini:
-  project: ${GCP_PROJECT_ID:whatsapp-bot-yash-2025}
-  location: ${GEMINI_REGION:us-central1}
-  api:
-    model: ${GEMINI_MODEL:gemini-2.5-flash}
+# ─── Pluggable AI provider config ──────────────────────────────────────────
+# Switch providers by changing AI_PROVIDER (+ that provider's own env vars)
+# and restarting the process/container. No code change, no rebuild.
+# Supported values: GEMINI, OLLAMA, OPENAI, ANTHROPIC.
+ai:
+  provider: ${AI_PROVIDER:GEMINI}
+  temperature: ${AI_TEMPERATURE:0.0}
+  timeout-seconds: ${AI_TIMEOUT_SECONDS:30}
+  memory-max-messages: ${AI_MEMORY_MAX_MESSAGES:20}
+
+  gemini:
+    api-key: ${AI_GEMINI_API_KEY:}
+    model-name: ${AI_GEMINI_MODEL:gemini-2.5-flash}
+
+  ollama:
+    base-url: ${AI_OLLAMA_BASE_URL:http://localhost:11434}
+    model-name: ${AI_OLLAMA_MODEL:llama3.1:8b}
+
+  openai:
+    api-key: ${AI_OPENAI_API_KEY:}
+    model-name: ${AI_OPENAI_MODEL:gpt-4o-mini}
+
+  anthropic:
+    api-key: ${AI_ANTHROPIC_API_KEY:}
+    model-name: ${AI_ANTHROPIC_MODEL:claude-sonnet-4-5}
 
 logging:
   level:
@@ -56,6 +76,3 @@ app:
     scheduler:
       interval-ms: ${PUBLISHING_SCHEDULER_INTERVAL_MS:30000}
 
-ai:
-  memory:
-    max-messages: 20

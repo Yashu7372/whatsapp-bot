@@ -1,0 +1,11 @@
+-- NOTE: The CREATE EXTENSION statements from the original V1 are now in V0.
+-- Copy your full V1__phase1_multi_tenant_inbox.sql here but REMOVE these two lines
+-- from the top, since V0 handles them:
+--   create extension if not exists pgcrypto;
+--   create extension if not exists vector;
+--
+-- Everything else in V1 stays exactly the same.
+--
+-- If you prefer not to split the migration, you can instead rename V0 to
+-- something that runs before V1 isn't needed and just rely on Cloud SQL
+-- having the extensions pre-enabled via the setup script.

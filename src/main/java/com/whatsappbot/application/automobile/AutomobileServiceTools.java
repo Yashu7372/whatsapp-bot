@@ -102,7 +102,10 @@ public class AutomobileServiceTools {
         return result.toString().trim();
     }
 
-    @Tool("List available automobile service appointment slots for a requested service type and preferred date in yyyy-MM-dd format.")
+    @Tool("List available automobile service appointment slots for a requested service type and preferred date in yyyy-MM-dd format. "
+            + "If the customer said a relative date (today, tomorrow, this Friday, next week), convert it to an "
+            + "exact yyyy-MM-dd date using the authoritative 'Current date' block in the system prompt — never guess "
+            + "or use your own assumption of today's date. If no date was given, pass null and this tool defaults to today.")
     @Transactional(readOnly = true)
     public String listAvailableSlots(String serviceType, String preferredDate) {
         TenantExecutionContext.Context context = TenantExecutionContext.getRequired();
@@ -120,7 +123,9 @@ public class AutomobileServiceTools {
         return result.append("Use bookAppointment with exact date and timeSlot to reserve.").toString().trim();
     }
 
-    @Tool("Book an automobile service appointment. Pass null or empty customerPhone to use the current customer's number (resolved from context automatically). Requires plate number, service type, date yyyy-MM-dd, exact time slot, and customer name.")
+    @Tool("Book an automobile service appointment. Pass null or empty customerPhone to use the current customer's number (resolved from context automatically). Requires plate number, service type, date yyyy-MM-dd, exact time slot, and customer name. "
+            + "If the customer said a relative date (today, tomorrow, this Friday, next week), convert it to an "
+            + "exact yyyy-MM-dd date using the authoritative 'Current date' block in the system prompt — never guess.")
     @Transactional
     public String bookAppointment(String customerPhone,
                                   String plateNumber,

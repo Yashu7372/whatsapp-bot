@@ -35,11 +35,32 @@ whatsapp:
   fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
   mock-send-enabled: false
 
-gemini:
-  project: ${GCP_PROJECT_ID}
-  location: ${GEMINI_REGION}
-  api:
-    model: ${GEMINI_MODEL:gemini-2.5-flash}
+# ─── AI provider — production default is Gemini's direct API ────────────────
+# NOTE: this replaced Vertex AI (gemini.project/gemini.location, which
+# required GCP Application Default Credentials). GEMINI_API_KEY is now
+# injected via Secret Manager the same way the other secrets are (see
+# cloudbuild.yaml / deploy/setup-gcp.sh, which already provision it).
+ai:
+  provider: ${AI_PROVIDER:GEMINI}
+  temperature: ${AI_TEMPERATURE:0.0}
+  timeout-seconds: ${AI_TIMEOUT_SECONDS:30}
+  memory-max-messages: ${AI_MEMORY_MAX_MESSAGES:20}
+
+  gemini:
+    api-key: ${GEMINI_API_KEY:}
+    model-name: ${GEMINI_MODEL:gemini-2.5-flash}
+
+  ollama:
+    base-url: ${AI_OLLAMA_BASE_URL:}
+    model-name: ${AI_OLLAMA_MODEL:llama3.1:8b}
+
+  openai:
+    api-key: ${AI_OPENAI_API_KEY:}
+    model-name: ${AI_OPENAI_MODEL:gpt-4o-mini}
+
+  anthropic:
+    api-key: ${AI_ANTHROPIC_API_KEY:}
+    model-name: ${AI_ANTHROPIC_MODEL:claude-sonnet-4-5}
 
 logging:
   level:

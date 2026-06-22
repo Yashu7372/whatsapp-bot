@@ -12,6 +12,12 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDate;
+import java.time.ZoneId;
+import java.time.format.DateTimeFormatter;
+import java.time.format.TextStyle;
+import java.util.Locale;
+
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -19,6 +25,8 @@ public class TenantAiService {
 
     private static final String AI_FALLBACK_REPLY =
             "Sorry, I'm having a brief technical issue. Please resend your message in a moment.";
+
+    private static final DateTimeFormatter CURRENT_DATE_FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd");
 
     private static final String GLOBAL_GUARDRAILS = """
             Platform rules:
@@ -40,6 +48,7 @@ public class TenantAiService {
         String ragContext = knowledgeService.buildContext(tenant.getId(), userMessage);
         String templateContext = templateService.describeAiEnabledTemplates(tenant);
         String systemPrompt = tenant.getSystemPrompt()
+                + "\n\n" + currentDateContext(tenant)
                 + "\n\n" + GLOBAL_GUARDRAILS
                 + "\n\nApproved WhatsApp templates:\n" + templateContext
                 + "\n\nKnowledge base context:\n" + ragContext;
@@ -60,6 +69,36 @@ public class TenantAiService {
         } finally {
             TenantExecutionContext.clear();
             TenantContext.clear();
+        }
+    }
+
+    /**
+     * Server-computed, real current date/day-of-week in the tenant's own
+     * timezone — never the LLM's own notion of "today", which is otherwise
+     * guessed from training data and reliably wrong (observed: a request
+     * for "today/tomorrow" answered with a date months in the past, on a
+     * day-of-week that didn't even match). This block is regenerated on
+     * every single turn so it can never go stale within a conversation.
+     */
+    private String currentDateContext(TenantEntity tenant) {
+        ZoneId zoneId = resolveZoneId(tenant);
+        LocalDate today = LocalDate.now(zoneId);
+        String dayOfWeek = today.getDayOfWeek().getDisplayName(TextStyle.FULL, Locale.ENGLISH);
+
+        return """
+                Current date (authoritative — use this, never your own assumption):
+                Today is %s, %s, timezone %s.
+                Always use this exact date as "today" for any relative date the customer mentions
+                (today, tomorrow, this week, next Monday, etc.) and when calling any tool that takes
+                a date parameter. Never state or imply a different "today" under any circumstance.
+                """.formatted(dayOfWeek, today.format(CURRENT_DATE_FORMAT), zoneId.getId());
+    }
+
+    private ZoneId resolveZoneId(TenantEntity tenant) {
+        try {
+            return ZoneId.of(tenant.getTimezone());
+        } catch (RuntimeException ex) {
+            return ZoneId.of("Asia/Dubai");
         }
     }
 }

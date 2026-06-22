@@ -20,6 +20,13 @@
     <properties>
         <java.version>21</java.version>
         <langchain4j.version>1.0.0</langchain4j.version>
+        <!--
+          cloud-sql-connector / Google libraries-bom are retained ONLY because
+          GCP Cloud Run + Cloud SQL remain a supported deployment target.
+          They are NOT required for local Docker/localtonet running and are
+          NOT used by the AI layer anymore (that moved off Vertex AI onto
+          the pluggable ai.provider abstraction — see infrastructure.ai).
+        -->
         <cloud-sql-connector.version>1.17.0</cloud-sql-connector.version>
     </properties>
 
@@ -74,8 +81,9 @@
         </dependency>
 
         <!--
-          Cloud SQL Socket Factory — replaces TCP connection in production.
-          Allows Cloud Run to connect to Cloud SQL via Unix socket (no VPC needed).
+          Cloud SQL Socket Factory — only used when SPRING_PROFILES_ACTIVE=prod
+          on Cloud Run. Harmless and unused on the `local` profile, where a
+          plain JDBC URL against the Docker Postgres container is used instead.
         -->
         <dependency>
             <groupId>com.google.cloud.sql</groupId>
@@ -93,15 +101,39 @@
             <artifactId>flyway-database-postgresql</artifactId>
         </dependency>
 
-        <!-- ── LangChain4j ────────────────────────────────────────────────── -->
+        <!-- ── LangChain4j core (AiService annotations, memory, tools) ──────── -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-spring-boot-starter</artifactId>
         </dependency>
+
+        <!--
+          ── Pluggable AI providers ─────────────────────────────────────────
+          All four are lightweight HTTP-client integrations (no heavy GCP
+          auth SDK like Vertex required). Which one is actually instantiated
+          at runtime is decided purely by the `ai.provider` / AI_PROVIDER
+          config value, resolved in infrastructure.ai.ChatModelFactory.
+          Keeping all four on the classpath means switching providers is a
+          config + restart operation, never a rebuild.
+        -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
-            <artifactId>langchain4j-vertex-ai-gemini</artifactId>
+            <artifactId>langchain4j-google-ai-gemini</artifactId>
         </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-ollama</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-open-ai</artifactId>
+        </dependency>
+        <dependency>
+            <groupId>dev.langchain4j</groupId>
+            <artifactId>langchain4j-anthropic</artifactId>
+        </dependency>
+
+        <!-- ── Embeddings (unchanged — local, free, not provider-pluggable) ── -->
         <dependency>
             <groupId>dev.langchain4j</groupId>
             <artifactId>langchain4j-embeddings-all-minilm-l6-v2</artifactId>
