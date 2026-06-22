@@ -11,4 +11,6 @@ import java.util.UUID;
 public interface ServiceAppointmentRepository extends JpaRepository<ServiceAppointmentEntity, UUID> {
     List<ServiceAppointmentEntity> findTop10ByTenantAndAppointmentDateAndStatusOrderByTimeSlotAsc(TenantEntity tenant, LocalDate appointmentDate, String status);
     Optional<ServiceAppointmentEntity> findByTenantAndAppointmentDateAndTimeSlot(TenantEntity tenant, LocalDate appointmentDate, String timeSlot);
+    List<ServiceAppointmentEntity> findAllByTenantIdOrderByAppointmentDateDescTimeSlotAsc(UUID tenantId);
+    List<ServiceAppointmentEntity> findAllByTenantIdAndStatusOrderByAppointmentDateDescTimeSlotAsc(UUID tenantId, String status);
 }

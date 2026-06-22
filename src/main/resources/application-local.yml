@@ -88,3 +88,16 @@ management:
 app:
   knowledge:
     rebuild-on-startup: ${KNOWLEDGE_REBUILD_ON_STARTUP:false}
+  jwt:
+    secret: ${JWT_SECRET:this-is-a-local-dev-secret-change-in-production-min32chars}
+    access-expiry-seconds: ${JWT_ACCESS_EXPIRY_SECONDS:3600}
+    refresh-expiry-seconds: ${JWT_REFRESH_EXPIRY_SECONDS:604800}
+  storage:
+    local-dir: ${STORAGE_LOCAL_DIR:./local-uploads}
+
+spring:
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:50MB}
