@@ -52,6 +52,9 @@ app:
       batch-size: ${WEBHOOK_OUTBOX_BATCH_SIZE:5}
       max-retries: ${WEBHOOK_OUTBOX_MAX_RETRIES:3}
       stuck-recovery-minutes: ${WEBHOOK_OUTBOX_STUCK_RECOVERY_MINUTES:10}
+  publishing:
+    scheduler:
+      interval-ms: ${PUBLISHING_SCHEDULER_INTERVAL_MS:30000}
 
 ai:
   memory:

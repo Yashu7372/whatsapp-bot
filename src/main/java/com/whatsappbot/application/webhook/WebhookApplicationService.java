@@ -9,6 +9,7 @@ import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.infrastructure.whatsapp.WhatsAppGraphClient;
 import com.whatsappbot.infrastructure.whatsapp.WhatsAppInboundMessage;
 import com.whatsappbot.infrastructure.whatsapp.WhatsAppWebhookParser;
+import com.whatsappbot.lead.LeadSignalService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
@@ -29,6 +30,7 @@ public class WebhookApplicationService {
     private final TenantAiService tenantAiService;
     private final WhatsAppGraphClient whatsAppGraphClient;
     private final WhatsappInteractiveInboundHandler interactiveInboundHandler;
+    private final LeadSignalService leadSignalService;
 
     public void handleIncomingWebhook(JsonNode payload) {
         webhookParser.parseFirstMessage(payload).ifPresent(this::handleMessage);
@@ -89,6 +91,18 @@ public class WebhookApplicationService {
             whatsAppGraphClient.sendTextMessage(tenant, inbound.fromPhoneNumber(), NON_TEXT_REPLY);
             conversationService.saveAiOutbound(tenant, conversation, NON_TEXT_REPLY);
             return;
+        }
+
+        // Emit lead signal for every inbound text message
+        try {
+            leadSignalService.extractFromInbound(
+                    tenant,
+                    context.contactEntity().getId(),
+                    conversation.getId(),
+                    inbound.textBody()
+            );
+        } catch (Exception e) {
+            log.warn("Lead signal extraction failed — non-critical. conversation={}", conversation.getId(), e);
         }
 
         String aiResponse = tenantAiService.reply(
