@@ -4,7 +4,6 @@ import com.whatsappbot.subscription.TenantSubscriptionEntity;
 import com.whatsappbot.subscription.TenantSubscriptionRepository;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
-import org.hibernate.annotations.JdbcTypeCode;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
