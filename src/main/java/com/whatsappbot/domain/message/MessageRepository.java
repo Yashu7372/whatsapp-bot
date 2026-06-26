@@ -10,6 +10,6 @@ import java.util.UUID;
 public interface MessageRepository extends JpaRepository<Message, UUID> {
     boolean existsByWaMessageId(String waMessageId);
 
-    @Query("SELECT m FROM Message m WHERE m.conversation.id = :conversationId ORDER BY m.sentAt DESC")
-    List<Message> findByConversationIdOrderBySentAtDesc(UUID conversationId, Pageable pageable);
+    @Query("SELECT m FROM Message m WHERE m.conversation.id = :conversationId ORDER BY m.createdAt DESC")
+    List<Message> findByConversationIdOrderByCreatedAtDesc(UUID conversationId, Pageable pageable);
 }

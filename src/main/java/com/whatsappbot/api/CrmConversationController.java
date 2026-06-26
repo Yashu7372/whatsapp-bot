@@ -2,7 +2,6 @@ package com.whatsappbot.api;
 
 import com.whatsappbot.domain.conversation.ConversationEntity;
 import com.whatsappbot.domain.conversation.ConversationRepository;
-import com.whatsappbot.domain.message.Message;
 import com.whatsappbot.domain.message.MessageRepository;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
@@ -60,7 +59,7 @@ public class CrmConversationController {
                 .orElseThrow(() -> new IllegalArgumentException("Conversation not found: " + id));
 
         List<MessageResponse> messages = messageRepository
-                .findByConversationIdOrderBySentAtDesc(id, PageRequest.of(0, limit))
+                .findByConversationIdOrderByCreatedAtDesc(id, PageRequest.of(0, limit))
                 .stream()
                 .map(m -> new MessageResponse(m.getId(), m.getConversation().getId(),
                         m.getDirection().name(), m.getTextBody(), m.getCreatedAt()))
