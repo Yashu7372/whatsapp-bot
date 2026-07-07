@@ -9,6 +9,8 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.time.LocalDate;
+import java.time.LocalDateTime;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
 
@@ -30,7 +32,10 @@ public class CrmBookingController {
             appts = appointmentRepository.findAllByTenantIdAndStatusOrderByAppointmentDateDescTimeSlotAsc(
                     tenantId, status.toUpperCase());
         } else {
-            appts = appointmentRepository.findAllByTenantIdOrderByAppointmentDateDescTimeSlotAsc(tenantId);
+            appts = appointmentRepository.findAllByTenantIdOrderByAppointmentDateDescTimeSlotAsc(tenantId)
+                    .stream()
+                    .filter(a -> !"AVAILABLE".equalsIgnoreCase(a.getStatus()))
+                    .toList();
         }
         return ResponseEntity.ok(appts.stream().map(this::toResponse).toList());
     }
@@ -64,13 +69,17 @@ public class CrmBookingController {
     private BookingResponse toResponse(ServiceAppointmentEntity a) {
         String contactName = a.getContact() != null ? a.getContact().getDisplayName() : null;
         String phone = a.getContact() != null ? a.getContact().getPhoneNumber() : null;
+        String scheduledAt = null;
+        if (a.getAppointmentDate() != null && a.getTimeSlot() != null) {
+            scheduledAt = LocalDateTime.of(a.getAppointmentDate(), LocalTime.parse(a.getTimeSlot())).toString();
+        }
         return new BookingResponse(a.getId(), contactName, phone, a.getServiceType(),
-                a.getAppointmentDate(), a.getTimeSlot(), a.getStatus(), a.getNotes());
+                scheduledAt, 30, a.getStatus(), a.getNotes());
     }
 
     public record BookingResponse(UUID id, String contactName, String phoneNumber,
-                                   String serviceType, LocalDate appointmentDate,
-                                   String timeSlot, String status, String notes) {}
+                                   String serviceType, String scheduledAt,
+                                   int durationMins, String status, String notes) {}
 
     public record StatusRequest(String status) {}
 }

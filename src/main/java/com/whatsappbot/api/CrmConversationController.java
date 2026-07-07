@@ -1,12 +1,15 @@
 package com.whatsappbot.api;
 
+import com.whatsappbot.application.conversation.ConversationService;
 import com.whatsappbot.domain.conversation.ConversationEntity;
 import com.whatsappbot.domain.conversation.ConversationRepository;
-import com.whatsappbot.domain.message.MessageRepository;
+import com.whatsappbot.domain.conversation.ConversationStatus;
+import com.whatsappbot.domain.message.Message;
+import com.whatsappbot.domain.tenant.TenantEntity;
+import com.whatsappbot.domain.tenant.TenantRepository;
+import com.whatsappbot.infrastructure.whatsapp.WhatsAppGraphClient;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
-import org.springframework.data.domain.PageRequest;
-import org.springframework.data.domain.Sort;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
@@ -21,15 +24,15 @@ import java.util.UUID;
 public class CrmConversationController {
 
     private final ConversationRepository conversationRepository;
-    private final MessageRepository messageRepository;
+    private final TenantRepository tenantRepository;
+    private final ConversationService conversationService;
+    private final WhatsAppGraphClient whatsAppGraphClient;
 
     @GetMapping
     public ResponseEntity<List<ConversationResponse>> list(@AuthenticationPrincipal Claims claims) {
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        List<ConversationResponse> result = conversationRepository.findAll(
-                        Sort.by(Sort.Direction.DESC, "lastMessageAt"))
+        TenantEntity tenant = getTenant(claims);
+        List<ConversationResponse> result = conversationRepository.findAllByTenantOrderByLastMessageAtDesc(tenant)
                 .stream()
-                .filter(c -> c.getTenant().getId().equals(tenantId))
                 .map(this::toResponse)
                 .toList();
         return ResponseEntity.ok(result);
@@ -40,10 +43,7 @@ public class CrmConversationController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        ConversationEntity conv = conversationRepository.findById(id)
-                .filter(c -> c.getTenant().getId().equals(tenantId))
-                .orElseThrow(() -> new IllegalArgumentException("Conversation not found: " + id));
+        ConversationEntity conv = getConversation(getTenant(claims), id);
         return ResponseEntity.ok(toResponse(conv));
     }
 
@@ -53,31 +53,145 @@ public class CrmConversationController {
             @PathVariable UUID id,
             @RequestParam(defaultValue = "50") int limit) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        conversationRepository.findById(id)
-                .filter(c -> c.getTenant().getId().equals(tenantId))
-                .orElseThrow(() -> new IllegalArgumentException("Conversation not found: " + id));
+        ConversationEntity conversation = getConversation(getTenant(claims), id);
+        conversationService.clearUnreadCount(conversation);
 
-        List<MessageResponse> messages = messageRepository
-                .findByConversationIdOrderByCreatedAtDesc(id, PageRequest.of(0, limit))
+        List<MessageResponse> messages = conversationService.recentMessages(id, limit)
                 .stream()
-                .map(m -> new MessageResponse(m.getId(), m.getConversation().getId(),
-                        m.getDirection().name(), m.getTextBody(), m.getCreatedAt()))
+                .map(this::toMessageResponse)
                 .toList();
+        java.util.Collections.reverse(messages);
         return ResponseEntity.ok(messages);
+    }
+
+    @PostMapping("/{id}/send")
+    public ResponseEntity<MessageResponse> send(
+            @AuthenticationPrincipal Claims claims,
+            @PathVariable UUID id,
+            @RequestBody SendMessageRequest request) {
+
+        TenantEntity tenant = getTenant(claims);
+        ConversationEntity conversation = getConversation(tenant, id);
+        String messageText = request.message() != null ? request.message().trim() : "";
+        if (messageText.isBlank()) {
+            throw new IllegalArgumentException("Message cannot be blank");
+        }
+
+        String phoneNumber = conversation.getContact() != null ? conversation.getContact().getPhoneNumber() : null;
+        if (phoneNumber == null || phoneNumber.isBlank()) {
+            throw new IllegalArgumentException("Conversation contact phone number is missing");
+        }
+
+        whatsAppGraphClient.sendTextMessage(tenant, phoneNumber, messageText);
+        Message saved = conversationService.saveAgentOutbound(tenant, conversation, messageText, null);
+        return ResponseEntity.ok(toMessageResponse(saved));
+    }
+
+    @PutMapping("/{id}/status")
+    public ResponseEntity<ConversationResponse> updateStatus(
+            @AuthenticationPrincipal Claims claims,
+            @PathVariable UUID id,
+            @RequestBody UpdateStatusRequest request) {
+
+        ConversationEntity conversation = getConversation(getTenant(claims), id);
+        String status = request.status() == null ? "" : request.status().trim().toLowerCase();
+        switch (status) {
+            case "bot" -> {
+                conversation.setStatus(ConversationStatus.ACTIVE);
+                conversation.setBotEnabled(true);
+                conversation.setAssignedAgentId(null);
+            }
+            case "human" -> {
+                conversation.setStatus(ConversationStatus.INTERVENE);
+                conversation.setBotEnabled(false);
+            }
+            case "closed" -> {
+                conversation.setStatus(ConversationStatus.RESOLVED);
+                conversation.setBotEnabled(false);
+            }
+            default -> throw new IllegalArgumentException("Unsupported conversation status: " + request.status());
+        }
+        return ResponseEntity.ok(toResponse(conversationRepository.save(conversation)));
     }
 
     private ConversationResponse toResponse(ConversationEntity c) {
         String contactName = c.getContact() != null ? c.getContact().getDisplayName() : null;
         String phone = c.getContact() != null ? c.getContact().getPhoneNumber() : null;
-        return new ConversationResponse(c.getId(), contactName, phone,
-                c.getStatus().name(), c.getPriority().name(), c.isBotEnabled(), c.getLastMessageAt());
+        String waId = c.getContact() != null ? c.getContact().getWaId() : null;
+        String language = c.getContact() != null ? c.getContact().getLanguage() : "en";
+        return new ConversationResponse(
+                c.getId(),
+                contactName,
+                phone,
+                waId,
+                language,
+                toUiStatus(c),
+                c.getPriority().name(),
+                c.isBotEnabled(),
+                c.getUnreadCount(),
+                c.getLastMessagePreview(),
+                c.getLastMessageAt()
+        );
     }
 
-    public record ConversationResponse(UUID id, String contactName, String phoneNumber,
-                                        String status, String priority, boolean botEnabled,
-                                        LocalDateTime lastMessageAt) {}
+    private MessageResponse toMessageResponse(Message m) {
+        return new MessageResponse(
+                m.getId(),
+                m.getConversation().getId(),
+                m.getDirection().name().toLowerCase(),
+                m.getTextBody(),
+                m.getCreatedAt(),
+                m.getIntent(),
+                m.getConfidenceScore(),
+                m.getActionType(),
+                m.getButtonsJson(),
+                m.isAiGenerated()
+        );
+    }
 
-    public record MessageResponse(UUID id, UUID conversationId, String direction,
-                                   String body, LocalDateTime sentAt) {}
+    private TenantEntity getTenant(Claims claims) {
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        return tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + tenantId));
+    }
+
+    private ConversationEntity getConversation(TenantEntity tenant, UUID id) {
+        return conversationRepository.findById(id)
+                .filter(c -> c.getTenant().getId().equals(tenant.getId()))
+                .orElseThrow(() -> new IllegalArgumentException("Conversation not found: " + id));
+    }
+
+    private String toUiStatus(ConversationEntity conversation) {
+        if (conversation.getStatus() == ConversationStatus.RESOLVED) {
+            return "closed";
+        }
+        return conversation.isBotEnabled() ? "bot" : "human";
+    }
+
+    public record ConversationResponse(UUID id,
+                                       String contactName,
+                                       String contactPhone,
+                                       String waId,
+                                       String language,
+                                       String status,
+                                       String priority,
+                                       boolean botEnabled,
+                                       int unreadCount,
+                                       String lastMessage,
+                                       LocalDateTime lastMessageAt) {}
+
+    public record MessageResponse(UUID id,
+                                  UUID conversationId,
+                                  String direction,
+                                  String content,
+                                  LocalDateTime sentAt,
+                                  String intent,
+                                  Double confidenceScore,
+                                  String actionType,
+                                  String buttons,
+                                  boolean aiGenerated) {}
+
+    public record SendMessageRequest(String message) {}
+
+    public record UpdateStatusRequest(String status) {}
 }

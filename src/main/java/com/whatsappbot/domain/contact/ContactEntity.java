@@ -35,6 +35,9 @@ public class ContactEntity {
     @Column(name = "display_name", length = 200)
     private String displayName;
 
+    @Column(name = "language", nullable = false, length = 20)
+    private String language = "en";
+
     @Column(name = "last_seen_at")
     private LocalDateTime lastSeenAt;
 
@@ -50,6 +53,7 @@ public class ContactEntity {
         contact.setWaId(waId);
         contact.setPhoneNumber(phoneNumber);
         contact.setDisplayName(displayName);
+        contact.setLanguage(tenant.getDefaultLanguage());
         contact.markSeenNow();
         return contact;
     }
