@@ -48,6 +48,9 @@ docker build -t whatsapp-bot .      # container image
 gcloud builds submit --config=cloudbuild.yaml
 ```
 
+End-to-end test (mock webhook → persistence → dashboard → agent handover):
+see `docs/e2e/E2E_SPEEDWHEELS.md` — fully runnable with no Meta account or AI key.
+
 ---
 
 ## Package layout
@@ -56,8 +59,9 @@ gcloud builds submit --config=cloudbuild.yaml
 src/main/java/com/whatsappbot/
 ├── api/                          REST controllers (thin — delegate to application layer)
 │   ├── WebhookController         GET (Meta verification) + POST (enqueues to outbox)
-│   ├── CrmConversationController /api/v1/crm/conversations — list, get, messages
+│   ├── CrmConversationController /api/v1/crm/conversations — list, get, messages, status, assign, send
 │   ├── CrmContactController      /api/v1/crm/contacts
+│   ├── CrmAgentController        /api/v1/crm/agents — active agents for assignment
 │   ├── CrmBookingController      /api/v1/crm/bookings (service appointments)
 │   ├── DashboardStatsController  /api/v1/crm/stats
 │   ├── OrderController           /api/v1/crm/orders
@@ -220,6 +224,7 @@ All changes go through Flyway migrations in `src/main/resources/db/migration/`. 
 | V5 | Webhook outbox (webhook_outbox table, status/retry/processing fields) |
 | V6 | Platform foundation: workspaces, team, roles |
 | V7–V21 | Campaign approval, trend intelligence, publishing, lead signals, analytics, auth users, media assets, documents, video scripts, SaaS foundation, object storage, zero-knowledge docs, jobs, video templates, seed admin users |
+| V22–V23 | CRM settings/metadata columns; seed live-chat agents per active tenant |
 
 **Key tables:**
 - `tenants` — `phone_number_id` (Meta), `system_prompt`, `business_type`, `access_token_encrypted`

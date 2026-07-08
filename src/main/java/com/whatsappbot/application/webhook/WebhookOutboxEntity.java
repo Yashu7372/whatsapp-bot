@@ -11,6 +11,8 @@ import jakarta.persistence.Table;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -26,6 +28,10 @@ public class WebhookOutboxEntity {
     @GeneratedValue(strategy = GenerationType.UUID)
     private UUID id;
 
+    // The column is jsonb; columnDefinition alone only affects generated DDL,
+    // so without an explicit JSON JDBC type Hibernate binds this as varchar
+    // and Postgres rejects the insert (SQLState 42804).
+    @JdbcTypeCode(SqlTypes.JSON)
     @Column(columnDefinition = "jsonb", nullable = false)
     private String payload;
 
