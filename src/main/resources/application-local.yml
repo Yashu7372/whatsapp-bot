@@ -37,12 +37,12 @@ server:
   port: ${SERVER_PORT:8080}
 
 whatsapp:
-  verify-token: ${WHATSAPP_VERIFY_TOKEN}
+  verify-token: ${WHATSAPP_VERIFY_TOKEN:local-dev-verify-token}
   graph-api-version: ${WHATSAPP_GRAPH_API_VERSION:v19.0}
   fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
   # Flip to true to log outbound messages instead of calling the real Graph
   # API — useful before you've set up a Meta test number.
-  mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
+  mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:true}
 
 # ─── AI provider — local default is Ollama (free, fully local, no API key) ──
 # Override AI_PROVIDER in .env to use GEMINI's free tier, OPENAI, or
@@ -92,6 +92,13 @@ management:
         include: health
 
 app:
+  local:
+    bootstrap:
+      enabled: ${LOCAL_BOOTSTRAP_ENABLED:true}
+      tenant-code: ${LOCAL_BOOTSTRAP_TENANT_CODE:speedwheels}
+      phone-number-id: ${LOCAL_BOOTSTRAP_PHONE_NUMBER_ID:LOCAL_AUTOWHEELS_PHONE}
+      admin-email: ${LOCAL_BOOTSTRAP_ADMIN_EMAIL:admin@speedwheels.com}
+      admin-password: ${LOCAL_BOOTSTRAP_ADMIN_PASSWORD:admin123}
   knowledge:
     rebuild-on-startup: ${KNOWLEDGE_REBUILD_ON_STARTUP:false}
   jwt:

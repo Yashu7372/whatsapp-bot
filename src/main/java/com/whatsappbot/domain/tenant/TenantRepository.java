@@ -7,5 +7,6 @@ import java.util.UUID;
 
 public interface TenantRepository extends JpaRepository<TenantEntity, UUID> {
     Optional<TenantEntity> findByPhoneNumberIdAndActiveTrue(String phoneNumberId);
+    Optional<TenantEntity> findByTenantCode(String tenantCode);
     Optional<TenantEntity> findByTenantCodeAndActiveTrue(String tenantCode);
 }
