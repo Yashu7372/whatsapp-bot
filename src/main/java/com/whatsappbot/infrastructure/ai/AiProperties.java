@@ -120,7 +120,7 @@ public class AiProperties {
     /** Local Ollama daemon — no API key; base URL points at the Ollama container/host. */
     public static class Ollama {
         private String baseUrl = "http://localhost:11434";
-        private String modelName = "llama3.1:8b";
+        private String modelName = "gemma4:e2b-it-qat";
 
         public String getBaseUrl() {
             return baseUrl;

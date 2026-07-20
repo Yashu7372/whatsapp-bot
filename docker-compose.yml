@@ -18,8 +18,7 @@ services:
     networks:
       - whatsapp_bot_net
 
-  # Optional fully-local model runtime. Only needed if AI_PROVIDER=OLLAMA.
-  # Pull a model once with: docker compose exec ollama ollama pull llama3.1:8b
+  # Local NVIDIA-accelerated LLM runtime.
   ollama:
     image: ollama/ollama:latest
     container_name: whatsapp-bot-ollama
@@ -27,10 +26,70 @@ services:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
       - whatsapp_bot_ollama_data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-10m}
+      OLLAMA_NUM_PARALLEL: ${OLLAMA_NUM_PARALLEL:-1}
+      OLLAMA_MAX_LOADED_MODELS: ${OLLAMA_MAX_LOADED_MODELS:-1}
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 15s
     networks:
       - whatsapp_bot_net
-    profiles:
-      - ollama
+
+  # One-shot model bootstrap. It is idempotent because Ollama reuses the model volume.
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: whatsapp-bot-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+      OLLAMA_MODEL: ${AI_OLLAMA_MODEL:-gemma4:e2b-it-qat}
+    entrypoint: ["/bin/sh", "-c"]
+    command: ["ollama pull $${OLLAMA_MODEL}"]
+    volumes:
+      - whatsapp_bot_ollama_data:/root/.ollama
+    networks:
+      - whatsapp_bot_net
+    restart: "no"
+
+  renderer:
+    build:
+      context: ./renderer
+      dockerfile: Dockerfile
+    container_name: whatsapp-bot-renderer
+    environment:
+      RENDER_ROOT: /data/renders
+      STORAGE_ROOT: /data/storage
+      KOKORO_LANG_CODE: ${KOKORO_LANG_CODE:-a}
+      KOKORO_DEFAULT_VOICE: ${KOKORO_DEFAULT_VOICE:-af_heart}
+      MAX_RENDER_SECONDS: ${MAX_RENDER_SECONDS:-90}
+    ports:
+      - "${RENDERER_PORT:-8090}:8090"
+    volumes:
+      - whatsapp_bot_storage:/data/storage:ro
+      - whatsapp_bot_renders:/data/renders
+      - whatsapp_bot_kokoro_cache:/root/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - whatsapp_bot_net
+    restart: unless-stopped
 
   app:
     build:
@@ -40,6 +99,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+      renderer:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -48,8 +111,21 @@ services:
       DB_USERNAME: ${POSTGRES_USER:-whatsapp_bot}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-whatsapp_bot}
       SERVER_PORT: 8080
+      AI_PROVIDER: ${AI_PROVIDER:-OLLAMA}
+      AI_OLLAMA_BASE_URL: http://ollama:11434
+      AI_OLLAMA_MODEL: ${AI_OLLAMA_MODEL:-gemma4:e2b-it-qat}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-180}
+      STORAGE_LOCAL_DIR: /data/storage
+      VIDEO_RENDERER_BASE_URL: http://renderer:8090
+      VIDEO_RENDER_OUTPUT_DIR: /data/renders
+      PEXELS_API_KEY: ${PEXELS_API_KEY:-}
+      PIXABAY_API_KEY: ${PIXABAY_API_KEY:-}
+      YOUTUBE_API_KEY: ${YOUTUBE_API_KEY:-}
     ports:
       - "${APP_PORT:-8080}:8080"
+    volumes:
+      - whatsapp_bot_storage:/data/storage
+      - whatsapp_bot_renders:/data/renders
     networks:
       - whatsapp_bot_net
     restart: unless-stopped
@@ -61,3 +137,6 @@ networks:
 volumes:
   whatsapp_bot_pgdata:
   whatsapp_bot_ollama_data:
+  whatsapp_bot_storage:
+  whatsapp_bot_renders:
+  whatsapp_bot_kokoro_cache:
