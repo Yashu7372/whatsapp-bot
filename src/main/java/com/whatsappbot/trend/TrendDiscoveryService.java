@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -20,113 +21,156 @@ public class TrendDiscoveryService {
     private final TrendSignalRepository trendSignalRepository;
     private final TrendSourceRepository trendSourceRepository;
     private final TrendScoringService trendScoringService;
+    private final List<TrendProvider> trendProviders;
     private final ChatModel chatModel;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     @Transactional
     public List<TrendSignalEntity> discover(TenantEntity tenant, String industry, String country,
                                              String platformCode, int count) {
-        String prompt = """
-                You are a social media trend analyst. Discover %d currently trending topics for the following context.
+        TrendProvider.TrendQuery query = new TrendProvider.TrendQuery(
+                industry, country, platformCode, Math.max(1, Math.min(count, 20)));
 
-                Industry: %s
-                Country/Region: %s
-                Platform: %s
-                Today's date context: Recent trends (assume current year 2025)
-
-                Return ONLY a JSON array (no markdown) of trend objects, each with:
-                {
-                  "keyword": "main trending keyword or phrase",
-                  "hashtag": "#relevanthashtag",
-                  "topic": "1-2 sentence description of what this trend is about and why it's trending",
-                  "rawScore": 0.0-1.0 (estimated trend strength, higher = stronger),
-                  "industry": "%s",
-                  "country": "%s"
-                }
-
-                Focus on trends that businesses in this industry can actually create content around.
-                """.formatted(count, industry, country, platformCode, industry, country);
-
-        List<TrendSignalEntity> results = new ArrayList<>();
-        try {
-            String raw = chatModel.chat(prompt);
-            String json = stripMarkdown(raw);
-            JsonNode arr = objectMapper.readTree(json);
-
-            TrendSourceEntity aiSource = trendSourceRepository
-                    .findAllByTenantIdAndActive(tenant.getId(), true).stream()
-                    .filter(s -> TrendSourceType.API.equals(s.getSourceType()))
-                    .findFirst()
-                    .orElseGet(() -> {
-                        TrendSourceEntity s = TrendSourceEntity.create(tenant, "AI Discovery", TrendSourceType.API);
-                        return trendSourceRepository.save(s);
-                    });
-
-            for (JsonNode node : arr) {
-                TrendSignalEntity signal = TrendSignalEntity.create(
-                        tenant,
-                        aiSource.getId(),
-                        node.path("keyword").asText(null),
-                        node.path("hashtag").asText(null),
-                        node.path("topic").asText(null),
-                        node.path("country").asText(country),
-                        node.path("industry").asText(industry),
-                        platformCode,
-                        node.path("rawScore").asDouble(0.7)
-                );
-                trendScoringService.applyScores(signal);
-                results.add(trendSignalRepository.save(signal));
+        for (TrendProvider provider : trendProviders) {
+            if (!provider.available() || !provider.supports(platformCode)) {
+                continue;
             }
-            log.info("AI discovered {} trends for tenant={} industry={} platform={}", results.size(), tenant.getId(), industry, platformCode);
-        } catch (Exception e) {
-            log.warn("AI trend discovery failed for tenant={}: {}", tenant.getId(), e.getMessage());
+            List<ObservedTrend> observed = provider.discover(query);
+            if (!observed.isEmpty()) {
+                return persistObserved(tenant, query, observed, provider.displayName());
+            }
         }
-        return results;
+
+        log.warn("No live trend provider returned results. Falling back to AI estimates. platform={} country={}",
+                platformCode, country);
+        return persistObserved(tenant, query, estimateWithAi(query), "AI Estimate");
     }
 
-    // Per-trend content recommendation
+    @Transactional(readOnly = true)
+    public List<ProviderStatus> providerStatuses() {
+        return trendProviders.stream()
+                .map(p -> new ProviderStatus(p.code(), p.displayName(), p.available()))
+                .toList();
+    }
+
     public String recommend(String keyword, String topic, String platformCode) {
         String prompt = """
-                You are a content strategist. Given this social media trend, suggest 3 specific content ideas a business could create.
+                You are a content strategist. Given this observed trend, suggest 3 original content ideas a business could create.
 
                 Trend keyword: %s
                 Trend description: %s
                 Platform: %s
 
+                Never suggest copying another creator's footage, voice, music, or script.
                 Return a JSON object with:
                 {
                   "summary": "1 sentence why this trend matters now",
                   "ideas": [
-                    {"type": "REEL/POST/STORY", "title": "content title", "angle": "specific angle/hook to use"},
-                    ...
+                    {"type": "REEL/POST/STORY", "title": "content title", "angle": "specific original angle/hook"}
                   ],
-                  "bestTime": "best time to post this content",
-                  "warning": "any brand safety concern or null"
+                  "bestTime": "recommended publishing window",
+                  "warning": "brand safety or copyright concern, or null"
                 }
                 """.formatted(keyword, topic, platformCode);
         try {
-            String raw = chatModel.chat(prompt);
-            return stripMarkdown(raw);
+            return stripMarkdown(chatModel.chat(prompt));
         } catch (Exception e) {
             log.warn("AI trend recommendation failed: {}", e.getMessage());
-            return "{\"summary\":\"This trend is gaining traction — act quickly.\",\"ideas\":[{\"type\":\"REEL\",\"title\":\"Our take on " + keyword + "\",\"angle\":\"Share your brand perspective\"}],\"bestTime\":\"Weekday mornings 8-10am\",\"warning\":null}";
+            return "{\"summary\":\"This topic is receiving current interest.\",\"ideas\":[{\"type\":\"REEL\",\"title\":\"Our original take on "
+                    + escapeJson(keyword) + "\",\"angle\":\"Connect the topic to a real customer problem\"}],\"bestTime\":\"Test two weekday time slots\",\"warning\":\"Use original assets and licensed music\"}";
+        }
+    }
+
+    private List<TrendSignalEntity> persistObserved(TenantEntity tenant, TrendProvider.TrendQuery query,
+                                                     List<ObservedTrend> observed, String sourceName) {
+        TrendSourceEntity source = findOrCreateSource(tenant, sourceName);
+        List<TrendSignalEntity> saved = new ArrayList<>();
+        for (ObservedTrend trend : observed.stream().limit(query.count()).toList()) {
+            TrendSignalEntity signal = TrendSignalEntity.create(
+                    tenant,
+                    source.getId(),
+                    trend.keyword(),
+                    trend.hashtag(),
+                    trend.topic(),
+                    query.country(),
+                    query.industry(),
+                    query.platformCode(),
+                    Math.max(0.0, Math.min(1.0, trend.rawScore()))
+            );
+            trendScoringService.applyScores(signal);
+            saved.add(trendSignalRepository.save(signal));
+        }
+        log.info("Discovered {} trends. tenant={} provider={} platform={}",
+                saved.size(), tenant.getId(), sourceName, query.platformCode());
+        return saved;
+    }
+
+    private TrendSourceEntity findOrCreateSource(TenantEntity tenant, String sourceName) {
+        return trendSourceRepository.findAllByTenantIdAndActive(tenant.getId(), true).stream()
+                .filter(s -> sourceName.equalsIgnoreCase(s.getName()))
+                .findFirst()
+                .orElseGet(() -> trendSourceRepository.save(
+                        TrendSourceEntity.create(tenant, sourceName, TrendSourceType.API)));
+    }
+
+    private List<ObservedTrend> estimateWithAi(TrendProvider.TrendQuery query) {
+        String prompt = """
+                Generate %d plausible content topics for brainstorming only.
+                These are AI estimates, not verified live platform trends.
+
+                Industry: %s
+                Country/Region: %s
+                Platform: %s
+                Current date: %s
+
+                Return ONLY a JSON array:
+                [{
+                  "keyword": "topic phrase",
+                  "hashtag": "#hashtag",
+                  "topic": "why a business could create original content about it",
+                  "rawScore": 0.0
+                }]
+                """.formatted(query.count(), query.industry(), query.country(), query.platformCode(), LocalDate.now());
+        try {
+            JsonNode array = objectMapper.readTree(stripMarkdown(chatModel.chat(prompt)));
+            List<ObservedTrend> results = new ArrayList<>();
+            for (JsonNode node : array) {
+                results.add(new ObservedTrend(
+                        node.path("keyword").asText(),
+                        node.path("hashtag").asText(),
+                        node.path("topic").asText(),
+                        Math.min(0.45, node.path("rawScore").asDouble(0.35)),
+                        "AI Estimate"
+                ));
+            }
+            return results;
+        } catch (Exception e) {
+            log.warn("AI trend estimate failed: {}", e.getMessage());
+            return List.of();
         }
     }
 
     private String stripMarkdown(String text) {
-        String t = text.trim();
-        if (t.startsWith("```")) {
-            t = t.replaceAll("(?s)^```\\w*\\n?", "").replaceAll("```$", "").trim();
+        String value = text == null ? "" : text.trim();
+        if (value.startsWith("```")) {
+            value = value.replaceAll("(?s)^```\\w*\\n?", "").replaceAll("```$", "").trim();
         }
-        // find first [ or {
-        int arrStart = t.indexOf('[');
-        int objStart = t.indexOf('{');
-        if (arrStart >= 0 && (objStart < 0 || arrStart < objStart)) {
-            return t.substring(arrStart, t.lastIndexOf(']') + 1);
+        int arrayStart = value.indexOf('[');
+        int objectStart = value.indexOf('{');
+        if (arrayStart >= 0 && (objectStart < 0 || arrayStart < objectStart)) {
+            int end = value.lastIndexOf(']');
+            return end > arrayStart ? value.substring(arrayStart, end + 1) : value;
         }
-        if (objStart >= 0) {
-            return t.substring(objStart, t.lastIndexOf('}') + 1);
+        if (objectStart >= 0) {
+            int end = value.lastIndexOf('}');
+            return end > objectStart ? value.substring(objectStart, end + 1) : value;
         }
-        return t;
+        return value;
     }
+
+    private String escapeJson(String value) {
+        return value == null ? "" : value.replace("\\", "\\\\").replace("\"", "\\\"");
+    }
+
+    public record ProviderStatus(String code, String name, boolean available) {}
 }
