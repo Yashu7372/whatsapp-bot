@@ -31,10 +31,7 @@ whatsapp:
   fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
   mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
 
-# ─── Pluggable AI provider config ──────────────────────────────────────────
-# Switch providers by changing AI_PROVIDER (+ that provider's own env vars)
-# and restarting the process/container. No code change, no rebuild.
-# Supported values: GEMINI, OLLAMA, OPENAI, ANTHROPIC.
+# Pluggable AI provider config. Local Docker Compose selects OLLAMA and Gemma 4.
 ai:
   provider: ${AI_PROVIDER:GEMINI}
   temperature: ${AI_TEMPERATURE:0.0}
@@ -47,7 +44,7 @@ ai:
 
   ollama:
     base-url: ${AI_OLLAMA_BASE_URL:http://localhost:11434}
-    model-name: ${AI_OLLAMA_MODEL:llama3.1:8b}
+    model-name: ${AI_OLLAMA_MODEL:gemma4:e2b}
 
   openai:
     api-key: ${AI_OPENAI_API_KEY:}
@@ -75,4 +72,16 @@ app:
   publishing:
     scheduler:
       interval-ms: ${PUBLISHING_SCHEDULER_INTERVAL_MS:30000}
-
+  reels:
+    renderer-base-url: ${REEL_RENDERER_BASE_URL:http://localhost:8090}
+    poll-interval-ms: ${REEL_RENDER_POLL_INTERVAL_MS:2000}
+    render-timeout-seconds: ${REEL_RENDER_TIMEOUT_SECONDS:240}
+    max-asset-bytes: ${REEL_MAX_ASSET_BYTES:10485760}
+    default-template: ${REEL_DEFAULT_TEMPLATE:DYNAMIC_BOLD}
+    default-voice: ${REEL_DEFAULT_VOICE:af_heart}
+  stock-media:
+    pexels-api-key: ${PEXELS_API_KEY:}
+    pixabay-api-key: ${PIXABAY_API_KEY:}
+  trends:
+    youtube-api-key: ${YOUTUBE_API_KEY:}
+    google-rss-enabled: ${GOOGLE_TRENDS_RSS_ENABLED:true}
