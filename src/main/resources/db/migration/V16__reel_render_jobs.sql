@@ -7,6 +7,7 @@ CREATE TABLE reel_render_jobs (
     voice VARCHAR(100),
     include_voice BOOLEAN NOT NULL DEFAULT FALSE,
     asset_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+    asset_urls JSONB NOT NULL DEFAULT '[]'::jsonb,
     output_stored_path VARCHAR(1000),
     output_size_bytes BIGINT,
     error_message TEXT,
