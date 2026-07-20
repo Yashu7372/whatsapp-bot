@@ -18,8 +18,7 @@ services:
     networks:
       - whatsapp_bot_net
 
-  # Local NVIDIA-accelerated LLM runtime. Start with:
-  # docker compose --profile local-ai up --build
+  # Local NVIDIA-accelerated LLM runtime.
   ollama:
     image: ollama/ollama:latest
     container_name: whatsapp-bot-ollama
@@ -46,8 +45,6 @@ services:
       start_period: 15s
     networks:
       - whatsapp_bot_net
-    profiles:
-      - local-ai
 
   # One-shot model bootstrap. It is idempotent because Ollama reuses the model volume.
   ollama-init:
@@ -66,8 +63,6 @@ services:
     networks:
       - whatsapp_bot_net
     restart: "no"
-    profiles:
-      - local-ai
 
   renderer:
     build:
@@ -104,6 +99,8 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
       renderer:
         condition: service_healthy
     env_file:
