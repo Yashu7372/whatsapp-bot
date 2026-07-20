@@ -48,6 +48,10 @@ public class ReelRenderJobEntity {
     @Column(name = "asset_ids", columnDefinition = "jsonb", nullable = false)
     private String assetIds = "[]";
 
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "asset_urls", columnDefinition = "jsonb", nullable = false)
+    private String assetUrls = "[]";
+
     @Column(name = "output_stored_path", length = 1000)
     private String outputStoredPath;
 
