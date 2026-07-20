@@ -18,8 +18,7 @@ services:
     networks:
       - whatsapp_bot_net
 
-  # Optional fully-local model runtime. Only needed if AI_PROVIDER=OLLAMA.
-  # Pull a model once with: docker compose exec ollama ollama pull llama3.1:8b
+  # Local LLM runtime. The init container pulls Gemma 4 once into the named volume.
   ollama:
     image: ollama/ollama:latest
     container_name: whatsapp-bot-ollama
@@ -27,10 +26,68 @@ services:
       - "${OLLAMA_PORT:-11434}:11434"
     volumes:
       - whatsapp_bot_ollama_data:/root/.ollama
+    environment:
+      OLLAMA_KEEP_ALIVE: ${OLLAMA_KEEP_ALIVE:-24h}
+    gpus: all
+    healthcheck:
+      test: ["CMD", "ollama", "list"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
     networks:
       - whatsapp_bot_net
-    profiles:
-      - ollama
+    restart: unless-stopped
+
+  ollama-init:
+    image: ollama/ollama:latest
+    container_name: whatsapp-bot-ollama-init
+    depends_on:
+      ollama:
+        condition: service_healthy
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - "ollama pull ${OLLAMA_MODEL:-gemma4:e2b}"
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    volumes:
+      - whatsapp_bot_ollama_data:/root/.ollama
+    networks:
+      - whatsapp_bot_net
+    restart: "no"
+
+  # Optional local voice generation. Start it with:
+  # docker compose --profile voice up --build
+  kokoro:
+    image: ghcr.io/remsky/kokoro-fastapi-cpu:latest
+    container_name: whatsapp-bot-kokoro
+    profiles: ["voice"]
+    ports:
+      - "${KOKORO_PORT:-8880}:8880"
+    environment:
+      API_LOG_LEVEL: ${KOKORO_LOG_LEVEL:-INFO}
+    networks:
+      - whatsapp_bot_net
+    restart: unless-stopped
+
+  renderer:
+    build:
+      context: ./renderer
+      dockerfile: Dockerfile
+    container_name: whatsapp-bot-renderer
+    environment:
+      PORT: 8090
+      KOKORO_BASE_URL: http://kokoro:8880
+      RENDER_TIMEOUT_SECONDS: ${RENDER_TIMEOUT_SECONDS:-240}
+    ports:
+      - "${RENDERER_PORT:-8090}:8090"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+    networks:
+      - whatsapp_bot_net
+    restart: unless-stopped
 
   app:
     build:
@@ -40,6 +97,10 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
+      ollama-init:
+        condition: service_completed_successfully
+      renderer:
+        condition: service_healthy
     env_file:
       - .env
     environment:
@@ -48,8 +109,17 @@ services:
       DB_USERNAME: ${POSTGRES_USER:-whatsapp_bot}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-whatsapp_bot}
       SERVER_PORT: 8080
+      AI_PROVIDER: OLLAMA
+      AI_OLLAMA_BASE_URL: http://ollama:11434
+      AI_OLLAMA_MODEL: ${OLLAMA_MODEL:-gemma4:e2b}
+      AI_TIMEOUT_SECONDS: ${AI_TIMEOUT_SECONDS:-180}
+      REEL_RENDERER_BASE_URL: http://renderer:8090
+      REEL_RENDER_TIMEOUT_SECONDS: ${RENDER_TIMEOUT_SECONDS:-240}
+      STORAGE_LOCAL_DIR: /app/local-uploads
     ports:
       - "${APP_PORT:-8080}:8080"
+    volumes:
+      - ./local-uploads:/app/local-uploads
     networks:
       - whatsapp_bot_net
     restart: unless-stopped
