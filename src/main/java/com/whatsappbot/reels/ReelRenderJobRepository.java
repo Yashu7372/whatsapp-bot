@@ -1,7 +1,8 @@
 package com.whatsappbot.reels;
 
-import org.springframework.data.jpa.repository.EntityGraph;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Query;
+import org.springframework.data.repository.query.Param;
 
 import java.util.List;
 import java.util.Optional;
@@ -15,6 +16,9 @@ public interface ReelRenderJobRepository extends JpaRepository<ReelRenderJobEnti
 
     Optional<ReelRenderJobEntity> findFirstByStatusOrderByCreatedAtAsc(ReelRenderStatus status);
 
-    @EntityGraph(attributePaths = {"tenant", "videoScript"})
-    Optional<ReelRenderJobEntity> findWithVideoScriptById(UUID id);
+    @Query("select job from ReelRenderJobEntity job " +
+            "join fetch job.tenant " +
+            "join fetch job.videoScript " +
+            "where job.id = :id")
+    Optional<ReelRenderJobEntity> findWithVideoScriptById(@Param("id") UUID id);
 }
