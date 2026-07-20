@@ -11,12 +11,13 @@
 
 ```bash
 cp .env.local-ai.example .env
-docker compose --profile local-ai up --build
+docker compose up --build
 ```
 
 The `ollama-init` container downloads `gemma4:e2b-it-qat` once into the persistent
-`whatsapp_bot_ollama_data` volume. The application uses Ollama at
-`http://ollama:11434`. The renderer is available at `http://localhost:8090`.
+`whatsapp_bot_ollama_data` volume. The application waits for that bootstrap to
+complete, then uses Ollama at `http://ollama:11434`. The renderer is available at
+`http://localhost:8090`.
 
 Verify:
 
