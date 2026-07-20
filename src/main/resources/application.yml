@@ -31,10 +31,6 @@ whatsapp:
   fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
   mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
 
-# ─── Pluggable AI provider config ──────────────────────────────────────────
-# Switch providers by changing AI_PROVIDER (+ that provider's own env vars)
-# and restarting the process/container. No code change, no rebuild.
-# Supported values: GEMINI, OLLAMA, OPENAI, ANTHROPIC.
 ai:
   provider: ${AI_PROVIDER:GEMINI}
   temperature: ${AI_TEMPERATURE:0.0}
@@ -47,7 +43,7 @@ ai:
 
   ollama:
     base-url: ${AI_OLLAMA_BASE_URL:http://localhost:11434}
-    model-name: ${AI_OLLAMA_MODEL:llama3.1:8b}
+    model-name: ${AI_OLLAMA_MODEL:gemma4:e2b-it-qat}
 
   openai:
     api-key: ${AI_OPENAI_API_KEY:}
@@ -75,4 +71,19 @@ app:
   publishing:
     scheduler:
       interval-ms: ${PUBLISHING_SCHEDULER_INTERVAL_MS:30000}
-
+  storage:
+    local-dir: ${STORAGE_LOCAL_DIR:./local-uploads}
+  video:
+    renderer:
+      enabled: ${VIDEO_RENDERER_ENABLED:true}
+      base-url: ${VIDEO_RENDERER_BASE_URL:http://localhost:8090}
+      output-dir: ${VIDEO_RENDER_OUTPUT_DIR:./local-renders}
+      poll-interval-ms: ${VIDEO_RENDER_POLL_INTERVAL_MS:2000}
+      batch-size: ${VIDEO_RENDER_BATCH_SIZE:2}
+      max-retries: ${VIDEO_RENDER_MAX_RETRIES:3}
+      stuck-recovery-minutes: ${VIDEO_RENDER_STUCK_RECOVERY_MINUTES:15}
+  media:
+    pexels-api-key: ${PEXELS_API_KEY:}
+    pixabay-api-key: ${PIXABAY_API_KEY:}
+  trends:
+    youtube-api-key: ${YOUTUBE_API_KEY:}
