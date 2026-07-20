@@ -1,6 +1,5 @@
 package com.whatsappbot.storage;
 
-import com.whatsappbot.auth.JwtService;
 import com.whatsappbot.auth.TenantUserRepository;
 import com.whatsappbot.domain.tenant.TenantRepository;
 import io.jsonwebtoken.Claims;
@@ -28,7 +27,6 @@ public class MediaAssetController {
     private final MediaAssetRepository mediaAssetRepository;
     private final TenantRepository tenantRepository;
     private final TenantUserRepository userRepository;
-    private final JwtService jwtService;
 
     @PostMapping("/upload")
     public ResponseEntity<AssetResponse> upload(
@@ -37,9 +35,7 @@ public class MediaAssetController {
             @RequestParam(value = "assetType", defaultValue = "DOCUMENT") String assetType,
             @RequestParam(value = "refId", required = false) UUID refId) throws IOException {
 
-        UUID tenantId = jwtService.extractTenantId(claims.toString());
-        // claims is the Claims object injected by Spring Security via JwtAuthFilter
-        tenantId = UUID.fromString((String) claims.get("tenantId"));
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         UUID userId = UUID.fromString(claims.getSubject());
 
         var tenant = tenantRepository.findById(tenantId)
