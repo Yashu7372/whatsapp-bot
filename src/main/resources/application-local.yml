@@ -1,9 +1,6 @@
-# src/main/resources/application-local.yml
 # Active when SPRING_PROFILES_ACTIVE=local (set in docker-compose.yml / .env)
-#
-# This profile targets the docker-compose Postgres container directly via
-# TCP/JDBC — no Cloud SQL socket factory, no GCP credentials, no Secret
-# Manager. Everything comes from the local .env file (see .env.example).
+# This profile uses Docker Postgres, local Ollama, local file storage and the
+# template renderer. No GCP credentials are required.
 
 spring:
   datasource:
@@ -27,6 +24,12 @@ spring:
     enabled: true
     baseline-on-migrate: false
 
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:50MB}
+
 server:
   port: ${SERVER_PORT:8080}
 
@@ -34,19 +37,14 @@ whatsapp:
   verify-token: ${WHATSAPP_VERIFY_TOKEN}
   graph-api-version: ${WHATSAPP_GRAPH_API_VERSION:v19.0}
   fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
-  # Flip to true to log outbound messages instead of calling the real Graph
-  # API — useful before you've set up a Meta test number.
   mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
 
-# ─── AI provider — local default is Ollama (free, fully local, no API key) ──
-# Override AI_PROVIDER in .env to use GEMINI's free tier, OPENAI, or
-# ANTHROPIC instead. Same env var name as the base profile — this section
-# just changes the *default* so a fresh local clone works with zero paid
-# accounts out of the box, as long as Ollama is reachable.
+# Local default: Gemma 4 through Ollama. Docker Compose overrides these values
+# explicitly so the application and Ollama always use the same model.
 ai:
   provider: ${AI_PROVIDER:OLLAMA}
   temperature: ${AI_TEMPERATURE:0.0}
-  timeout-seconds: ${AI_TIMEOUT_SECONDS:60}
+  timeout-seconds: ${AI_TIMEOUT_SECONDS:180}
   memory-max-messages: ${AI_MEMORY_MAX_MESSAGES:20}
 
   gemini:
@@ -54,12 +52,8 @@ ai:
     model-name: ${AI_GEMINI_MODEL:gemini-2.5-flash}
 
   ollama:
-    # "ollama" resolves via the docker-compose service name when the app
-    # itself runs in Docker too. If you instead run Ollama directly on your
-    # host machine (not in Docker) and the app in Docker, use
-    # http://host.docker.internal:11434 instead — see README/.env.example.
     base-url: ${AI_OLLAMA_BASE_URL:http://ollama:11434}
-    model-name: ${AI_OLLAMA_MODEL:llama3.1:8b}
+    model-name: ${AI_OLLAMA_MODEL:gemma4:e2b}
 
   openai:
     api-key: ${AI_OPENAI_API_KEY:}
@@ -74,10 +68,7 @@ logging:
     com.whatsappbot: DEBUG
     org.flywaydb: INFO
     org.hibernate.SQL: WARN
-    # TEMPORARY: shows the exact outbound HTTP request/response to Gemini,
-    # including headers, to debug the ACCESS_TOKEN_TYPE_UNSUPPORTED issue.
-    # Remove/raise back to INFO once resolved — this can log request bodies.
-    dev.langchain4j: DEBUG
+    dev.langchain4j: INFO
 
 management:
   endpoints:
@@ -94,10 +85,16 @@ app:
     refresh-expiry-seconds: ${JWT_REFRESH_EXPIRY_SECONDS:604800}
   storage:
     local-dir: ${STORAGE_LOCAL_DIR:./local-uploads}
-
-spring:
-  servlet:
-    multipart:
-      enabled: true
-      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
-      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:50MB}
+  reels:
+    renderer-base-url: ${REEL_RENDERER_BASE_URL:http://renderer:8090}
+    poll-interval-ms: ${REEL_RENDER_POLL_INTERVAL_MS:2000}
+    render-timeout-seconds: ${REEL_RENDER_TIMEOUT_SECONDS:240}
+    max-asset-bytes: ${REEL_MAX_ASSET_BYTES:10485760}
+    default-template: ${REEL_DEFAULT_TEMPLATE:DYNAMIC_BOLD}
+    default-voice: ${REEL_DEFAULT_VOICE:af_heart}
+  stock-media:
+    pexels-api-key: ${PEXELS_API_KEY:}
+    pixabay-api-key: ${PIXABAY_API_KEY:}
+  trends:
+    youtube-api-key: ${YOUTUBE_API_KEY:}
+    google-rss-enabled: ${GOOGLE_TRENDS_RSS_ENABLED:true}
