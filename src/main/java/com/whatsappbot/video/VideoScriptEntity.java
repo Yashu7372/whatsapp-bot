@@ -41,6 +41,9 @@ public class VideoScriptEntity {
     @Column(name = "style", nullable = false, length = 100)
     private String style = "ENGAGING";
 
+    @Column(name = "template_code", nullable = false, length = 100)
+    private String templateCode = "TALKING_PRESENTER";
+
     @Column(name = "duration_secs", nullable = false)
     private int durationSecs = 30;
 
