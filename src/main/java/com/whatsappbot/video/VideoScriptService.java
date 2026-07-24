@@ -24,8 +24,8 @@ public class VideoScriptService {
     @Transactional
     public VideoScriptEntity generate(TenantEntity tenant, String topic, String platformCode,
                                       String contentType, String style, int durationSecs,
-                                      UUID contentIdeaId) {
-        String prompt = buildPrompt(topic, platformCode, contentType, style, durationSecs);
+                                      String templateCode, UUID contentIdeaId) {
+        String prompt = buildPrompt(topic, platformCode, contentType, style, durationSecs, templateCode);
         String raw;
         try {
             raw = chatModel.chat(prompt);
@@ -40,6 +40,7 @@ public class VideoScriptService {
         script.setPlatformCode(platformCode);
         script.setContentType(contentType);
         script.setStyle(style);
+        script.setTemplateCode(templateCode);
         script.setDurationSecs(durationSecs);
         script.setContentIdeaId(contentIdeaId);
 
@@ -70,14 +71,12 @@ public class VideoScriptService {
 
     @Transactional
     public void delete(UUID tenantId, UUID id) {
-        videoScriptRepository.findById(id).ifPresent(s -> {
-            if (s.getTenant().getId().equals(tenantId)) {
-                videoScriptRepository.delete(s);
-            }
-        });
+        videoScriptRepository.findByIdAndTenantId(id, tenantId)
+                .ifPresent(videoScriptRepository::delete);
     }
 
-    private String buildPrompt(String topic, String platform, String type, String style, int seconds) {
+    private String buildPrompt(String topic, String platform, String type, String style,
+                               int seconds, String templateCode) {
         return """
                 You are an expert short-form video content creator. Generate a complete video script for the following brief.
 
@@ -86,6 +85,13 @@ public class VideoScriptService {
                 Content type: %s
                 Style/tone: %s
                 Target duration: %d seconds
+                Blender template: %s
+
+                This is a deterministic Blender render plan. For every shot:
+                - action must be one of IDLE, TALK, WALK, RUN, WAVE, POINT, PRODUCT_TURN
+                - camera must be one of CLOSE_UP, MEDIUM, WIDE, TRACKING, PRODUCT
+                - environment and character are short reusable asset labels
+                - durations must total approximately the target duration
 
                 Return ONLY a valid JSON object (no markdown, no explanation) with exactly these fields:
                 {
@@ -93,14 +99,24 @@ public class VideoScriptService {
                   "hook": "first 3-5 seconds hook line that stops the scroll",
                   "script": "full voiceover/dialogue script for the video",
                   "shots": [
-                    {"id": 1, "duration": 3, "visual": "describe what camera shows", "audio": "voiceover or caption text"},
+                    {
+                      "id": 1,
+                      "duration": 3,
+                      "visual": "describe what camera shows",
+                      "audio": "voiceover or caption text",
+                      "environment": "STUDIO",
+                      "character": "PRESENTER",
+                      "action": "TALK",
+                      "expression": "HAPPY",
+                      "camera": "MEDIUM"
+                    },
                     ... (6-10 shots)
                   ],
                   "hashtags": ["#tag1", "#tag2", ... (10-15 relevant hashtags)],
                   "caption": "social media caption with hook + CTA (max 150 chars)",
                   "music": "suggested background music genre or mood"
                 }
-                """.formatted(topic, platform, type, style, seconds);
+                """.formatted(topic, platform, type, style, seconds, templateCode);
     }
 
     private String buildFallback(String topic, String platform, int seconds) {
@@ -110,10 +126,10 @@ public class VideoScriptService {
                   "hook": "You won't believe this about %s...",
                   "script": "Hey everyone! Today we're talking about %s. Here's what you need to know: [Your key points here]. Follow for more content like this!",
                   "shots": [
-                    {"id": 1, "duration": 3, "visual": "Creator on camera, energetic intro", "audio": "You won't believe this about %s..."},
-                    {"id": 2, "duration": 5, "visual": "Screen recording or B-roll of topic", "audio": "Here's the key thing you need to know"},
-                    {"id": 3, "duration": %d, "visual": "Main content demonstration", "audio": "Main script content goes here"},
-                    {"id": 4, "duration": 3, "visual": "Creator back on camera", "audio": "Follow for more tips like this!"}
+                    {"id": 1, "duration": 3, "visual": "Presenter delivers the hook", "audio": "You won't believe this about %s...", "environment": "STUDIO", "character": "PRESENTER", "action": "TALK", "expression": "EXCITED", "camera": "CLOSE_UP"},
+                    {"id": 2, "duration": 5, "visual": "Presenter walks toward the product", "audio": "Here's the key thing you need to know", "environment": "STUDIO", "character": "PRESENTER", "action": "WALK", "expression": "HAPPY", "camera": "TRACKING"},
+                    {"id": 3, "duration": %d, "visual": "Product rotates while the presenter explains it", "audio": "Main script content goes here", "environment": "STUDIO", "character": "PRESENTER", "action": "PRODUCT_TURN", "expression": "NEUTRAL", "camera": "PRODUCT"},
+                    {"id": 4, "duration": 3, "visual": "Presenter points to the call to action", "audio": "Follow for more tips like this!", "environment": "STUDIO", "character": "PRESENTER", "action": "POINT", "expression": "HAPPY", "camera": "MEDIUM"}
                   ],
                   "hashtags": ["#%s", "#trending", "#viral", "#howto", "#tips"],
                   "caption": "Everything you need to know about %s! 🔥 Follow for more. #%s",
