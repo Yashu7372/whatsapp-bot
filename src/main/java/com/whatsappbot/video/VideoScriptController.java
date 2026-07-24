@@ -9,6 +9,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
+import java.util.Locale;
 import java.util.UUID;
 
 @RestController
@@ -25,6 +26,15 @@ public class VideoScriptController {
         return ResponseEntity.ok(videoScriptService.listByTenant(tenantId));
     }
 
+    @GetMapping("/templates")
+    public ResponseEntity<List<TemplateOption>> templates() {
+        return ResponseEntity.ok(List.of(
+                new TemplateOption("TALKING_PRESENTER", "Talking Presenter", 6),
+                new TemplateOption("PRODUCT_SHOWCASE", "Product Showcase", 7),
+                new TemplateOption("PLAYGROUND_STORY", "Character Story", 8)
+        ));
+    }
+
     @PostMapping("/generate")
     public ResponseEntity<VideoScriptEntity> generate(@AuthenticationPrincipal Claims claims,
                                                        @RequestBody GenerateRequest request) {
@@ -38,6 +48,7 @@ public class VideoScriptController {
                 request.contentType() != null ? request.contentType() : "REEL",
                 request.style() != null ? request.style() : "ENGAGING",
                 request.durationSecs() > 0 ? request.durationSecs() : 30,
+                normalizeTemplate(request.template()),
                 request.contentIdeaId()
         );
         return ResponseEntity.ok(script);
@@ -51,5 +62,18 @@ public class VideoScriptController {
     }
 
     record GenerateRequest(String topic, String platformCode, String contentType,
-                           String style, int durationSecs, UUID contentIdeaId) {}
+                           String style, int durationSecs, String template, UUID contentIdeaId) {}
+
+    record TemplateOption(String code, String displayName, int shotCount) {}
+
+    private String normalizeTemplate(String value) {
+        if (value == null || value.isBlank()) {
+            return "TALKING_PRESENTER";
+        }
+        String normalized = value.toUpperCase(Locale.ROOT);
+        return switch (normalized) {
+            case "TALKING_PRESENTER", "PRODUCT_SHOWCASE", "PLAYGROUND_STORY" -> normalized;
+            default -> "TALKING_PRESENTER";
+        };
+    }
 }
