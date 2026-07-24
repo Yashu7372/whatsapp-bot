@@ -75,4 +75,28 @@ app:
   publishing:
     scheduler:
       interval-ms: ${PUBLISHING_SCHEDULER_INTERVAL_MS:30000}
-
+  video:
+    blender:
+      executable: ${BLENDER_EXECUTABLE:blender}
+      python-script: ${BLENDER_PYTHON_SCRIPT:./blender/render_scene.py}
+      template-dir: ${BLENDER_TEMPLATE_DIR:./blender/templates}
+      work-dir: ${BLENDER_WORK_DIR:./local-renders}
+      timeout-seconds: ${BLENDER_TIMEOUT_SECONDS:1800}
+  media-generation:
+    default-reel-budget-usd: ${MEDIA_DEFAULT_REEL_BUDGET_USD:1.00}
+    default-shot-budget-usd: ${MEDIA_DEFAULT_SHOT_BUDGET_USD:0.20}
+    hard-maximum-reel-budget-usd: ${MEDIA_HARD_MAX_REEL_BUDGET_USD:5.00}
+    hard-maximum-shot-budget-usd: ${MEDIA_HARD_MAX_SHOT_BUDGET_USD:0.50}
+    local:
+      enabled: ${MEDIA_LOCAL_ENABLED:false}
+      base-url: ${MEDIA_LOCAL_BASE_URL:http://localhost:8188}
+      timeout: ${MEDIA_LOCAL_TIMEOUT:5m}
+    gemini:
+      enabled: ${MEDIA_GEMINI_ENABLED:false}
+      api-key: ${MEDIA_GEMINI_API_KEY:}
+      base-url: ${MEDIA_GEMINI_BASE_URL:https://generativelanguage.googleapis.com/v1beta}
+      flash-model: ${MEDIA_GEMINI_FLASH_MODEL:gemini-3.1-flash-image}
+      pro-model: ${MEDIA_GEMINI_PRO_MODEL:gemini-3-pro-image}
+      timeout: ${MEDIA_GEMINI_TIMEOUT:3m}
+      flash-estimated-cost-usd: ${MEDIA_GEMINI_FLASH_ESTIMATED_COST_USD:0.0800}
+      pro-estimated-cost-usd: ${MEDIA_GEMINI_PRO_ESTIMATED_COST_USD:0.1600}
