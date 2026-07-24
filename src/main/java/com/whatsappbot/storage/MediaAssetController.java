@@ -1,6 +1,5 @@
 package com.whatsappbot.storage;
 
-import com.whatsappbot.auth.JwtService;
 import com.whatsappbot.auth.TenantUserRepository;
 import com.whatsappbot.domain.tenant.TenantRepository;
 import io.jsonwebtoken.Claims;
@@ -9,10 +8,12 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.util.List;
@@ -28,7 +29,6 @@ public class MediaAssetController {
     private final MediaAssetRepository mediaAssetRepository;
     private final TenantRepository tenantRepository;
     private final TenantUserRepository userRepository;
-    private final JwtService jwtService;
 
     @PostMapping("/upload")
     public ResponseEntity<AssetResponse> upload(
@@ -37,10 +37,24 @@ public class MediaAssetController {
             @RequestParam(value = "assetType", defaultValue = "DOCUMENT") String assetType,
             @RequestParam(value = "refId", required = false) UUID refId) throws IOException {
 
-        UUID tenantId = jwtService.extractTenantId(claims.toString());
-        // claims is the Claims object injected by Spring Security via JwtAuthFilter
-        tenantId = UUID.fromString((String) claims.get("tenantId"));
+        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         UUID userId = UUID.fromString(claims.getSubject());
+
+        if ("CHARACTER_REFERENCE".equals(assetType)) {
+            if (refId == null) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "Character reference uploads require refId");
+            }
+            String contentType = file.getContentType();
+            if (contentType == null || !contentType.startsWith("image/")) {
+                throw new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST, "Character reference must be an image");
+            }
+            if (file.getSize() > 12L * 1024 * 1024) {
+                throw new ResponseStatusException(
+                        HttpStatus.PAYLOAD_TOO_LARGE, "Character reference must be 12 MB or smaller");
+            }
+        }
 
         var tenant = tenantRepository.findById(tenantId)
                 .orElseThrow(() -> new IllegalArgumentException("Tenant not found"));
