@@ -4,6 +4,7 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.whatsappbot.auth.TenantUserEntity;
 import com.whatsappbot.auth.TenantUserRepository;
+import com.whatsappbot.auth.UserRole;
 import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.domain.tenant.TenantRepository;
 import com.whatsappbot.storage.StorageService;
@@ -20,6 +21,7 @@ import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -28,6 +30,13 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class DocumentService {
+
+    /** Decision values accepted from a reviewer, and the terminal approval statuses they map to. */
+    private static final String DECISION_APPROVED = "APPROVED";
+    private static final String DECISION_REJECTED = "REJECTED";
+
+    /** Status an approval carries while it still has steps outstanding. */
+    private static final String APPROVAL_PENDING = "PENDING";
 
     private final DocumentRepository documentRepository;
     private final DocumentVersionRepository versionRepository;
@@ -40,6 +49,7 @@ public class DocumentService {
     private final StorageService storageService;
     private final TenantRepository tenantRepository;
     private final TenantUserRepository userRepository;
+    private final DocumentAuditService auditService;
     private final ObjectMapper objectMapper;
 
     // ── Document CRUD ──────────────────────────────────────────────────────
@@ -78,6 +88,13 @@ public class DocumentService {
             version.setAssetId(asset.getId());
         }
         versionRepository.save(version);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("title", doc.getTitle());
+        payload.put("docType", doc.getDocType());
+        payload.put("version", 1);
+        payload.put("hasFile", version.getAssetId() != null);
+        auditService.record(tenantId, doc.getId(), userId, DocumentAuditService.DOCUMENT_CREATED, payload);
 
         log.info("Document created. id={} tenant={}", doc.getId(), tenantId);
         return doc;
@@ -124,6 +141,12 @@ public class DocumentService {
             version.setChangeNotes(req.changeNotes());
             version.setCreatedBy(user);
             versionRepository.save(version);
+
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("version", nextVersion);
+            payload.put("changeNotes", req.changeNotes());
+            payload.put("assetId", asset.getId().toString());
+            auditService.record(tenantId, docId, userId, DocumentAuditService.VERSION_UPLOADED, payload);
         }
 
         return documentRepository.save(doc);
@@ -243,15 +266,37 @@ public class DocumentService {
             });
         }
 
-        return approvalRepository.save(approval);
+        DocumentApprovalEntity savedApproval = approvalRepository.save(approval);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("approvalId", savedApproval.getId().toString());
+        payload.put("workflowId", doc.getWorkflowId() != null ? doc.getWorkflowId().toString() : null);
+        payload.put("documentVersion", doc.getCurrentVersion());
+        payload.put("submittedByEmail", user != null ? user.getEmail() : null);
+        auditService.record(tenantId, docId, userId, DocumentAuditService.DOCUMENT_SUBMITTED, payload);
+
+        return savedApproval;
     }
 
     @Transactional
     public DocumentApprovalStepEntity decideStep(UUID tenantId, UUID userId, UUID approvalId,
                                                    String decision, String comments) {
+        String normalisedDecision = decision == null ? "" : decision.trim().toUpperCase();
+        if (!DECISION_APPROVED.equals(normalisedDecision) && !DECISION_REJECTED.equals(normalisedDecision)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Decision must be " + DECISION_APPROVED + " or " + DECISION_REJECTED);
+        }
+
         DocumentApprovalEntity approval = approvalRepository.findById(approvalId)
                 .filter(a -> a.getTenant().getId().equals(tenantId))
                 .orElseThrow(() -> new IllegalArgumentException("Approval not found: " + approvalId));
+
+        // A completed approval is a closed record. Without this, a rejected document could be
+        // re-decided into APPROVED, which is exactly the outcome the audit trail must rule out.
+        if (!APPROVAL_PENDING.equalsIgnoreCase(approval.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Approval is already " + approval.getStatus());
+        }
 
         List<DocumentApprovalStepEntity> steps = stepRepository
                 .findAllByApprovalIdOrderByStepIndex(approvalId);
@@ -267,9 +312,10 @@ public class DocumentService {
                     return s;
                 });
 
-        TenantUserEntity user = userRepository.findById(userId).orElse(null);
+        TenantUserEntity user = requireActiveUser(tenantId, userId);
+        assertMayDecide(user, currentStep);
         currentStep.setReviewer(user);
-        currentStep.setDecision(decision);
+        currentStep.setDecision(normalisedDecision);
         currentStep.setComments(comments);
         currentStep.setDecidedAt(LocalDateTime.now());
         stepRepository.save(currentStep);
@@ -277,24 +323,94 @@ public class DocumentService {
         DocumentEntity doc = documentRepository.findByIdAndTenantId(approval.getDocumentId(), tenantId)
                 .orElseThrow();
 
-        if ("REJECTED".equalsIgnoreCase(decision)) {
-            approval.setStatus("REJECTED");
+        boolean approvalComplete;
+        if (DECISION_REJECTED.equals(normalisedDecision)) {
+            approval.setStatus(DECISION_REJECTED);
             approval.setCompletedAt(LocalDateTime.now());
             doc.setStatus(DocumentStatus.REJECTED);
-        } else if ("APPROVED".equalsIgnoreCase(decision)) {
+            approvalComplete = true;
+        } else {
             boolean moreSteps = steps.stream().anyMatch(s -> s.getStepIndex() > currentIdx);
             if (moreSteps) {
                 approval.setCurrentStep(currentIdx + 1);
+                approvalComplete = false;
             } else {
-                approval.setStatus("APPROVED");
+                approval.setStatus(DECISION_APPROVED);
                 approval.setCompletedAt(LocalDateTime.now());
                 doc.setStatus(DocumentStatus.APPROVED);
+                approvalComplete = true;
             }
         }
 
         approvalRepository.save(approval);
         documentRepository.save(doc);
+
+        Map<String, Object> auditPayload = new LinkedHashMap<>();
+        auditPayload.put("approvalId", approvalId.toString());
+        auditPayload.put("stepIndex", currentIdx);
+        auditPayload.put("stepName", currentStep.getStepName());
+        auditPayload.put("decision", normalisedDecision);
+        auditPayload.put("comments", comments);
+        auditPayload.put("decidedByEmail", user.getEmail());
+        auditPayload.put("approvalComplete", approvalComplete);
+        auditPayload.put("documentVersion", doc.getCurrentVersion());
+
+        auditService.record(tenantId, doc.getId(), userId,
+                DECISION_REJECTED.equals(normalisedDecision)
+                        ? DocumentAuditService.APPROVAL_REJECTED
+                        : DocumentAuditService.APPROVAL_APPROVED,
+                auditPayload);
+
         return currentStep;
+    }
+
+    /**
+     * Loads the acting user and confirms they still belong to this tenant and are active.
+     *
+     * <p>The previous implementation used {@code findById(userId).orElse(null)} and carried on
+     * with a null reviewer, so a deleted or foreign user id produced an approval attributed to
+     * nobody.
+     */
+    private TenantUserEntity requireActiveUser(UUID tenantId, UUID userId) {
+        return userRepository.findById(userId)
+                .filter(u -> u.getTenant().getId().equals(tenantId))
+                .filter(TenantUserEntity::isActive)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.FORBIDDEN,
+                        "User is not an active member of this tenant"));
+    }
+
+    /**
+     * Enforces who is allowed to decide an approval step.
+     *
+     * <p>Previously the only check was that the approval belonged to the caller's tenant, so any
+     * authenticated user — including a read-only one — could approve any step of any document
+     * and have their name recorded as the approver. Where approval releases payment, that is the
+     * one thing the workflow has to prevent.
+     *
+     * <p>A step names its reviewer by email when the workflow is seeded. Where that name is
+     * present it is authoritative. Where a step has no named reviewer (a document with no
+     * workflow attached), the decision falls back to tenant administrators and managers rather
+     * than being open to everyone.
+     */
+    private void assertMayDecide(TenantUserEntity user, DocumentApprovalStepEntity step) {
+        if (user.getRole() == UserRole.VIEWER) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Read-only users cannot decide approval steps");
+        }
+
+        String assignedReviewer = step.getReviewerEmail();
+        if (assignedReviewer != null && !assignedReviewer.isBlank()) {
+            if (!assignedReviewer.trim().equalsIgnoreCase(user.getEmail())) {
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                        "This step is assigned to another reviewer");
+            }
+            return;
+        }
+
+        if (user.getRole() != UserRole.ADMIN && user.getRole() != UserRole.MANAGER) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,
+                    "Only an administrator or manager can decide an unassigned step");
+        }
     }
 
     @Transactional(readOnly = true)
@@ -384,6 +500,14 @@ public class DocumentService {
         }
 
         versionRepository.save(version);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("title", doc.getTitle());
+        payload.put("docType", doc.getDocType());
+        payload.put("version", 1);
+        payload.put("mode", "ZERO_KNOWLEDGE");
+        auditService.record(tenantId, doc.getId(), userId, DocumentAuditService.DOCUMENT_CREATED, payload);
+
         log.info("Encrypted document created. id={} tenant={}", doc.getId(), tenantId);
         return doc;
     }

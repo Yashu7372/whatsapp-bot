@@ -12,7 +12,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -38,10 +37,10 @@ public class DocumentController {
         featureAccessService.assertAccess(tenantId, FeatureCode.DOCUMENT_CONTROL);
 
         var req = new DocumentService.CreateDocumentRequest(title, docType, description, null);
+        // Audit events are recorded inside DocumentService, in the same transaction as the
+        // change itself, so every entry point is covered and a rolled-back write cannot leave
+        // an event behind claiming it happened.
         DocumentEntity doc = documentService.createDocument(tenantId, userId, req, file);
-        documentAuditService.record(tenantId, doc.getId(), userId,
-                DocumentAuditService.DOCUMENT_CREATED,
-                Map.of("title", doc.getTitle(), "docType", doc.getDocType()));
         return ResponseEntity.ok(toResponse(doc));
     }
 
@@ -61,28 +60,20 @@ public class DocumentController {
         featureAccessService.assertFeatureEnabled(tenantId, FeatureCode.ZERO_KNOWLEDGE_STORAGE);
 
         DocumentEntity doc = documentService.createEncryptedDocument(tenantId, userId, metadataJson, encryptedFile);
-        documentAuditService.record(tenantId, doc.getId(), userId,
-                DocumentAuditService.DOCUMENT_CREATED,
-                Map.of("title", doc.getTitle(), "mode", "ZERO_KNOWLEDGE"));
         return ResponseEntity.ok(toResponse(doc));
     }
 
     // ── Audit trail ───────────────────────────────────────────────────────
 
     @GetMapping("/{id}/audit")
-    public ResponseEntity<List<AuditEventResponse>> auditTrail(
+    public ResponseEntity<List<DocumentAuditService.AuditEventView>> auditTrail(
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
         UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         featureAccessService.assertAccess(tenantId, FeatureCode.DOCUMENT_CONTROL);
-        return ResponseEntity.ok(
-                documentAuditService.getAuditTrail(tenantId, id)
-                        .stream().map(e -> new AuditEventResponse(
-                                e.getId(), e.getDocumentId(), e.getEventType(),
-                                e.getActorUser() != null ? e.getActorUser().getEmail() : null,
-                                e.getEventPayload(), e.getCreatedAt()))
-                        .toList());
+        // Mapped inside the service transaction — the actor is a LAZY association.
+        return ResponseEntity.ok(documentAuditService.getAuditTrail(tenantId, id));
     }
 
     @PostMapping(consumes = "application/json")
@@ -268,8 +259,4 @@ public class DocumentController {
     public record CommentRequest(String body) {}
 
     public record DecisionRequest(String decision, String comments) {}
-
-    public record AuditEventResponse(UUID id, UUID documentId, String eventType,
-                                      String actorEmail, java.util.Map<String, Object> payload,
-                                      LocalDateTime createdAt) {}
 }
