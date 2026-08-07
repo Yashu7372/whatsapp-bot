@@ -97,3 +97,23 @@ CREATE TABLE actual_cost_entries (
 CREATE INDEX idx_actual_cost_project_date ON actual_cost_entries(project_id, cost_date);
 CREATE INDEX idx_actual_cost_budget_line ON actual_cost_entries(budget_line_id);
 CREATE INDEX idx_actual_cost_org ON actual_cost_entries(organization_id);
+
+-- Keep the existing V26 budget projection live. Resource-cost entries are the immutable
+-- detail; budget_lines.actual_cost is the fast aggregate consumed by Project Controls.
+CREATE OR REPLACE FUNCTION apply_actual_cost_to_budget_line()
+RETURNS TRIGGER AS $$
+BEGIN
+    IF NEW.budget_line_id IS NOT NULL THEN
+        UPDATE budget_lines
+           SET actual_cost = actual_cost + NEW.amount
+         WHERE id = NEW.budget_line_id
+           AND tenant_id = NEW.tenant_id
+           AND project_id = NEW.project_id;
+    END IF;
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_actual_cost_budget_rollup
+AFTER INSERT ON actual_cost_entries
+FOR EACH ROW EXECUTE FUNCTION apply_actual_cost_to_budget_line();
