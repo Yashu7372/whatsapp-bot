@@ -13,4 +13,6 @@ public interface ContactRepository extends JpaRepository<ContactEntity, UUID> {
     Optional<ContactEntity> findByTenantAndPhoneNumber(TenantEntity tenant, String phoneNumber);
 
     List<ContactEntity> findByTenantAndDisplayNameContainingIgnoreCase(TenantEntity tenant, String displayName);
+
+    List<ContactEntity> findAllByTenantOrderByLastSeenAtDesc(TenantEntity tenant);
 }

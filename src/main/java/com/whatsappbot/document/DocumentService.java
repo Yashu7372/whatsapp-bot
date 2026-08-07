@@ -12,9 +12,11 @@ import com.whatsappbot.storage.MediaAssetEntity;
 import com.whatsappbot.storage.MediaAssetRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.time.LocalDateTime;
@@ -34,6 +36,7 @@ public class DocumentService {
     private final DocumentApprovalStepRepository stepRepository;
     private final DocumentCommentRepository commentRepository;
     private final MediaAssetRepository mediaAssetRepository;
+    private final DocumentEncryptionMetadataRepository encryptionMetadataRepository;
     private final StorageService storageService;
     private final TenantRepository tenantRepository;
     private final TenantUserRepository userRepository;
@@ -320,6 +323,89 @@ public class DocumentService {
         asset.setAssetType("DOCUMENT");
         asset.setRefId(refId);
         asset.setUploadedBy(user);
+        return mediaAssetRepository.save(asset);
+    }
+
+    // ── Zero-knowledge encrypted document upload ───────────────────────────
+
+    @Transactional
+    public DocumentEntity createEncryptedDocument(UUID tenantId, UUID userId,
+                                                   String metadataJson,
+                                                   MultipartFile encryptedFile) throws IOException {
+        TenantEntity tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tenant not found"));
+        TenantUserEntity user = userRepository.findById(userId).orElse(null);
+
+        Map<String, Object> meta = objectMapper.readValue(metadataJson, new TypeReference<>() {});
+
+        String title       = (String) meta.getOrDefault("title", "Untitled");
+        String docType     = (String) meta.getOrDefault("docType", "GENERAL");
+        String description = (String) meta.getOrDefault("description", null);
+
+        DocumentEntity doc = new DocumentEntity();
+        doc.setTenant(tenant);
+        doc.setTitle(title);
+        doc.setDocType(docType);
+        doc.setDescription(description);
+        doc.setCreatedBy(user);
+
+        workflowRepository.findByTenantIdAndDocType(tenantId, docType)
+                .map(DocumentControlWorkflowEntity::getId)
+                .ifPresent(doc::setWorkflowId);
+
+        doc = documentRepository.save(doc);
+
+        DocumentVersionEntity version = new DocumentVersionEntity();
+        version.setDocumentId(doc.getId());
+        version.setTenant(tenant);
+        version.setVersionNum(1);
+        version.setCreatedBy(user);
+
+        if (encryptedFile != null && !encryptedFile.isEmpty()) {
+            MediaAssetEntity asset = storeEncryptedFile(tenant, user, encryptedFile, doc.getId());
+            version.setAssetId(asset.getId());
+
+            // Persist encryption envelope
+            DocumentEncryptionMetadataEntity enc = new DocumentEncryptionMetadataEntity();
+            enc.setAsset(asset);
+            enc.setTenant(tenant);
+            enc.setEncryptionAlg((String) meta.getOrDefault("encryptionAlg", "AES-GCM-256"));
+            enc.setKeyId((String) meta.get("keyId"));
+            enc.setEncryptedFileKey((String) meta.get("encryptedFileKey"));
+            String iv = (String) meta.get("ivBase64");
+            if (iv == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ivBase64 is required");
+            enc.setIvBase64(iv);
+            enc.setAuthTagBase64((String) meta.get("authTagBase64"));
+            String cipherHash = (String) meta.get("ciphertextSha256");
+            if (cipherHash == null) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "ciphertextSha256 is required");
+            enc.setCiphertextSha256(cipherHash);
+            enc.setPlaintextSha256((String) meta.get("plaintextSha256"));
+            encryptionMetadataRepository.save(enc);
+        }
+
+        versionRepository.save(version);
+        log.info("Encrypted document created. id={} tenant={}", doc.getId(), tenantId);
+        return doc;
+    }
+
+    private MediaAssetEntity storeEncryptedFile(TenantEntity tenant, TenantUserEntity user,
+                                                  MultipartFile file, UUID refId) throws IOException {
+        StoredFile stored = storageService.store(
+                tenant.getId(), file.getOriginalFilename(),
+                "application/octet-stream", file.getInputStream(), file.getSize());
+
+        MediaAssetEntity asset = new MediaAssetEntity();
+        asset.setTenant(tenant);
+        asset.setOriginalName(file.getOriginalFilename() != null ? file.getOriginalFilename() : "ciphertext.bin");
+        asset.setStoredPath(stored.storedPath());
+        asset.setObjectKey(stored.storedPath());
+        asset.setContentType("application/octet-stream");
+        asset.setSizeBytes(stored.sizeBytes());
+        asset.setAssetType("DOCUMENT_CIPHERTEXT");
+        asset.setRefId(refId);
+        asset.setUploadedBy(user);
+        asset.setCreatedBy(user);
+        asset.setVisibility("PRIVATE");
         return mediaAssetRepository.save(asset);
     }
 

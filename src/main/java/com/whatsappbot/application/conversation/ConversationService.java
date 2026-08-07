@@ -5,6 +5,7 @@ import com.whatsappbot.domain.contact.ContactRepository;
 import com.whatsappbot.domain.conversation.ConversationEntity;
 import com.whatsappbot.domain.conversation.ConversationRepository;
 import com.whatsappbot.domain.message.Message;
+import com.whatsappbot.domain.message.MessageDirection;
 import com.whatsappbot.domain.message.MessageRepository;
 import com.whatsappbot.domain.message.MessageType;
 import com.whatsappbot.domain.tenant.TenantEntity;
@@ -12,6 +13,9 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+
+import java.util.List;
+import java.util.UUID;
 
 @Slf4j
 @Service
@@ -51,7 +55,7 @@ public class ConversationService {
         ConversationEntity conversation = conversationRepository.findByTenantAndContact(tenant, savedContact)
                 .orElseGet(() -> ConversationEntity.create(tenant, savedContact));
 
-        conversation.touchLastMessageAt();
+        conversation.markInboundUnread(textBody);
 
         // 4. Assign the saved conversation to a new variable as well,
         // to prevent the same issue if you add lambdas further down
@@ -66,15 +70,46 @@ public class ConversationService {
 
     @Transactional
     public void saveAiOutbound(TenantEntity tenant, ConversationEntity conversation, String responseText) {
-        conversation.touchLastMessageAt();
+        conversation.markOutbound(responseText);
         conversationRepository.save(conversation);
         messageRepository.save(Message.outboundAi(tenant, conversation, MessageType.TEXT, responseText));
+    }
+
+    @Transactional
+    public Message saveAgentOutbound(TenantEntity tenant,
+                                     ConversationEntity conversation,
+                                     String responseText,
+                                     UUID agentId) {
+        conversation.markOutbound(responseText);
+        conversationRepository.save(conversation);
+        return messageRepository.save(
+                Message.outboundAgent(tenant, conversation, MessageType.TEXT, responseText, agentId)
+        );
     }
 
     @Transactional
     public void markHumanRequested(ConversationEntity conversation) {
         conversation.requestHuman();
         conversationRepository.save(conversation);
+    }
+
+    @Transactional
+    public void clearUnreadCount(ConversationEntity conversation) {
+        conversation.clearUnreadCount();
+        conversationRepository.save(conversation);
+    }
+
+    @Transactional(readOnly = true)
+    public List<Message> recentMessages(UUID conversationId, int limit) {
+        return messageRepository.findByConversationIdOrderByCreatedAtDesc(
+                conversationId,
+                org.springframework.data.domain.PageRequest.of(0, limit)
+        );
+    }
+
+    @Transactional(readOnly = true)
+    public long countOutboundMessages(UUID tenantId) {
+        return messageRepository.countByTenantIdAndDirection(tenantId, MessageDirection.OUTBOUND);
     }
 
     public record ConversationContext(ContactEntity contactEntity, ConversationEntity conversationEntity) {

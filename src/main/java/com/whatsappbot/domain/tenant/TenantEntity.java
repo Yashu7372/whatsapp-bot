@@ -4,6 +4,8 @@ import jakarta.persistence.*;
 import lombok.Getter;
 import lombok.NoArgsConstructor;
 import lombok.Setter;
+import org.hibernate.annotations.JdbcTypeCode;
+import org.hibernate.type.SqlTypes;
 
 import java.time.LocalDateTime;
 import java.util.UUID;
@@ -46,6 +48,19 @@ public class TenantEntity {
 
     @Column(name = "timezone", nullable = false, length = 100)
     private String timezone = "Asia/Dubai";
+
+    @Column(name = "business_hours", nullable = false, length = 200)
+    private String businessHours = "Sat-Thu 9am-9pm";
+
+    @Column(name = "crm_business_type", nullable = false, length = 50)
+    private String crmBusinessType = "other";
+
+    @Column(name = "whatsapp_number", length = 100)
+    private String whatsappNumber;
+
+    @JdbcTypeCode(SqlTypes.JSON)
+    @Column(name = "faq_json", nullable = false, columnDefinition = "jsonb")
+    private String faqJson = "[]";
 
     @Column(name = "active", nullable = false)
     private boolean active = true;

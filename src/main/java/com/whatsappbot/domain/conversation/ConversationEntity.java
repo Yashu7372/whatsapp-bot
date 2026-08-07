@@ -48,6 +48,12 @@ public class ConversationEntity {
     @Column(name = "last_message_at")
     private LocalDateTime lastMessageAt;
 
+    @Column(name = "unread_count", nullable = false)
+    private int unreadCount;
+
+    @Column(name = "last_message_preview", columnDefinition = "text")
+    private String lastMessagePreview;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -75,6 +81,21 @@ public class ConversationEntity {
 
     public void touchLastMessageAt() {
         this.lastMessageAt = LocalDateTime.now();
+    }
+
+    public void markInboundUnread(String messageText) {
+        this.unreadCount += 1;
+        this.lastMessagePreview = messageText;
+        touchLastMessageAt();
+    }
+
+    public void markOutbound(String messageText) {
+        this.lastMessagePreview = messageText;
+        touchLastMessageAt();
+    }
+
+    public void clearUnreadCount() {
+        this.unreadCount = 0;
     }
 
     @PrePersist

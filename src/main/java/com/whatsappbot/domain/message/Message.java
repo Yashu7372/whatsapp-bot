@@ -52,6 +52,18 @@ public class Message {
     @Column(name = "sent_by_agent_id")
     private UUID sentByAgentId;
 
+    @Column(name = "intent", length = 120)
+    private String intent;
+
+    @Column(name = "confidence_score")
+    private Double confidenceScore;
+
+    @Column(name = "action_type", length = 120)
+    private String actionType;
+
+    @Column(name = "buttons_json", columnDefinition = "text")
+    private String buttonsJson;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
@@ -77,6 +89,22 @@ public class Message {
         message.setMessageType(messageType);
         message.setTextBody(textBody);
         message.setAiGenerated(true);
+        return message;
+    }
+
+    public static Message outboundAgent(TenantEntity tenant,
+                                        ConversationEntity conversation,
+                                        MessageType messageType,
+                                        String textBody,
+                                        UUID agentId) {
+        Message message = new Message();
+        message.setTenant(tenant);
+        message.setConversation(conversation);
+        message.setDirection(MessageDirection.OUTBOUND);
+        message.setMessageType(messageType);
+        message.setTextBody(textBody);
+        message.setAiGenerated(false);
+        message.setSentByAgentId(agentId);
         return message;
     }
 

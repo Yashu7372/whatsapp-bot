@@ -36,10 +36,7 @@ public class CrmContactController {
         if (search != null && !search.isBlank()) {
             contacts = contactRepository.findByTenantAndDisplayNameContainingIgnoreCase(tenant, search);
         } else {
-            contacts = contactRepository.findAll(Sort.by(Sort.Direction.DESC, "createdAt"))
-                    .stream()
-                    .filter(c -> c.getTenant().getId().equals(tenantId))
-                    .toList();
+            contacts = contactRepository.findAllByTenantOrderByLastSeenAtDesc(tenant);
         }
 
         return ResponseEntity.ok(contacts.stream().map(this::toResponse).toList());
@@ -73,10 +70,11 @@ public class CrmContactController {
 
     private ContactResponse toResponse(ContactEntity c) {
         return new ContactResponse(c.getId(), c.getWaId(), c.getPhoneNumber(),
-                c.getDisplayName(), c.getLastSeenAt(), c.getCreatedAt());
+                c.getDisplayName(), c.getLanguage(), c.getLastSeenAt(), c.getCreatedAt());
     }
 
     public record ContactResponse(UUID id, String waId, String phoneNumber, String displayName,
+                                   String language,
                                    LocalDateTime lastSeenAt, LocalDateTime createdAt) {}
 
     public record UpdateContactRequest(String displayName) {}

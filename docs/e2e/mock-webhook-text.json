@@ -1,0 +1,35 @@
+{
+  "object": "whatsapp_business_account",
+  "entry": [
+    {
+      "id": "MOCK_WABA_ID",
+      "changes": [
+        {
+          "field": "messages",
+          "value": {
+            "messaging_product": "whatsapp",
+            "metadata": {
+              "display_phone_number": "971500000000",
+              "phone_number_id": "REPLACE_WITH_META_PHONE_NUMBER_ID"
+            },
+            "contacts": [
+              {
+                "profile": { "name": "E2E Test Customer" },
+                "wa_id": "971529999001"
+              }
+            ],
+            "messages": [
+              {
+                "from": "971529999001",
+                "id": "wamid.E2E-TEXT-0001",
+                "timestamp": "1751900000",
+                "type": "text",
+                "text": { "body": "Hi, I would like to book an oil change for my car" }
+              }
+            ]
+          }
+        }
+      ]
+    }
+  ]
+}

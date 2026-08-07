@@ -12,4 +12,8 @@ public interface MessageRepository extends JpaRepository<Message, UUID> {
 
     @Query("SELECT m FROM Message m WHERE m.conversation.id = :conversationId ORDER BY m.createdAt DESC")
     List<Message> findByConversationIdOrderByCreatedAtDesc(UUID conversationId, Pageable pageable);
+
+    long countByTenantIdAndDirection(UUID tenantId, MessageDirection direction);
+
+    long countByTenantIdAndDirectionAndCreatedAtGreaterThanEqual(UUID tenantId, MessageDirection direction, java.time.LocalDateTime createdAt);
 }
