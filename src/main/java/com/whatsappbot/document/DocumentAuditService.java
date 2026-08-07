@@ -1,9 +1,6 @@
 package com.whatsappbot.document;
 
-import com.fasterxml.jackson.core.JsonProcessingException;
-import com.fasterxml.jackson.databind.ObjectMapper;
-import com.fasterxml.jackson.databind.SerializationFeature;
-import com.fasterxml.jackson.databind.json.JsonMapper;
+import com.whatsappbot.audit.AuditChainHasher;
 import com.whatsappbot.auth.TenantUserRepository;
 import com.whatsappbot.domain.tenant.TenantRepository;
 import lombok.RequiredArgsConstructor;
@@ -11,11 +8,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-import java.nio.charset.StandardCharsets;
-import java.security.MessageDigest;
-import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
-import java.util.HexFormat;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -25,32 +18,27 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class DocumentAuditService {
 
-    /** Marks the first event in a document's chain, which has no predecessor. */
-    private static final String GENESIS_HASH = "genesis";
-
-    /** Separates fields in the pre-image so values cannot run together and collide. */
-    private static final String HASH_FIELD_SEPARATOR = "|";
-
-    /** Stand-in used when a payload cannot be serialised; keeps the chain unbroken. */
-    private static final String UNSERIALISABLE_PAYLOAD = "<unserialisable>";
-
-    /**
-     * Sorts map keys so the same logical payload always serialises identically — a hash that
-     * depended on attribute ordering could not be recomputed later to verify the chain.
-     * Configured once and never mutated, so it is safe to share across threads.
-     */
-    private static final ObjectMapper CANONICAL_JSON = JsonMapper.builder()
-            .configure(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS, true)
-            .build();
-
     private final DocumentAuditEventRepository auditEventRepository;
+    private final DocumentRepository documentRepository;
     private final TenantRepository tenantRepository;
     private final TenantUserRepository userRepository;
+    private final AuditChainHasher hasher;
 
+    /**
+     * Appends an event to a document's chain.
+     *
+     * <p>Takes a write lock on the document first. Reading the previous hash and writing the next
+     * event is a read-modify-write, so two concurrent events — an approval and a version upload,
+     * say — would otherwise both read the same predecessor and produce two entries claiming the
+     * same position. The chain would fork, and a fork is indistinguishable from tampering.
+     * Serialising on the parent row means the second writer waits and links onto the first.
+     */
     @Transactional
     public DocumentAuditEventEntity record(UUID tenantId, UUID documentId,
                                             UUID actorUserId, String eventType,
                                             Map<String, Object> payload) {
+        documentRepository.lockById(documentId);
+
         DocumentAuditEventEntity event = new DocumentAuditEventEntity();
         event.setTenant(tenantRepository.getReferenceById(tenantId));
         event.setDocumentId(documentId);
@@ -60,105 +48,46 @@ public class DocumentAuditService {
         event.setEventType(eventType);
         event.setEventPayload(payload);
 
-        // Set the timestamp here rather than leaving it to @PrePersist: the hash has to
-        // cover it, and @PrePersist only fires at flush — after this method returns.
-        event.setCreatedAt(LocalDateTime.now());
+        // Set here rather than leaving it to @PrePersist: the hash covers it, and @PrePersist
+        // only fires at flush — after this method returns.
+        LocalDateTime occurredAt = LocalDateTime.now();
+        event.setCreatedAt(occurredAt);
 
         String previousHash = auditEventRepository
                 .findLatestByDocumentId(tenantId, documentId)
                 .map(DocumentAuditEventEntity::getEventHash)
-                .orElse(GENESIS_HASH);
+                .orElse(AuditChainHasher.GENESIS_HASH);
         event.setPreviousEventHash(previousHash);
-        event.setEventHash(computeHash(event));
+        event.setEventHash(hasher.hash(tenantId, documentId, eventType, actorUserId,
+                occurredAt, payload, previousHash));
 
         return auditEventRepository.save(event);
     }
 
     /**
-     * Hashes everything that gives the event meaning: who acted, when, and what changed.
-     *
-     * <p>An earlier version hashed only tenant + document + event type + previous hash. That
-     * left the chain unable to detect the two edits that matter most — two approvals on the
-     * same document produced identical hashes, and {@code event_payload} (which records who
-     * approved and what they said) could be rewritten in the database without breaking it.
-     * Since these events are the evidence that work was approved before payment, the hash
-     * has to commit to the payload, the actor and the timestamp as well.
-     *
-     * <p>The payload is serialised with map keys sorted so that a re-hash of the same logical
-     * event always produces the same digest regardless of JSON attribute ordering.
-     */
-    private String computeHash(DocumentAuditEventEntity event) {
-        String canonicalPayload;
-        try {
-            canonicalPayload = event.getEventPayload() == null
-                    ? ""
-                    : CANONICAL_JSON.writeValueAsString(event.getEventPayload());
-        } catch (JsonProcessingException e) {
-            // Never drop the event over a serialisation problem — fall back to a marker that
-            // still differs per event, so the chain stays continuous and the anomaly is visible.
-            log.warn("Could not canonicalise audit payload for document {}: {}",
-                    event.getDocumentId(), e.getMessage());
-            canonicalPayload = UNSERIALISABLE_PAYLOAD;
-        }
-
-        String actorId = event.getActorUser() != null ? event.getActorUser().getId().toString() : "";
-
-        return sha256(String.join(HASH_FIELD_SEPARATOR,
-                event.getTenant().getId().toString(),
-                event.getDocumentId().toString(),
-                event.getEventType(),
-                actorId,
-                event.getCreatedAt().toString(),
-                canonicalPayload,
-                event.getPreviousEventHash()));
-    }
-
-    /**
-     * Returns the trail already mapped for the caller.
-     *
-     * <p>Mapping happens here rather than in the controller because {@code actorUser} is a LAZY
-     * association and {@code open-in-view} is false — reading the actor's email after this
-     * transaction closed threw {@code LazyInitializationException}, which meant the endpoint
-     * failed for every document that had an actor recorded against it.
+     * The document's history, mapped inside the transaction because the actor is a LAZY
+     * association.
      *
      * <p>Scoped by tenant: the trail exposes actor emails and payloads, and document ids are
      * guessable, so an unscoped lookup would let one tenant read another's approval history.
+     *
+     * <p>Both hashes are exposed so a caller can re-link the chain and check it is intact.
      */
     @Transactional(readOnly = true)
     public List<AuditEventView> getAuditTrail(UUID tenantId, UUID documentId) {
-        return auditEventRepository
-                .findAllByTenantIdAndDocumentIdOrderByCreatedAtAsc(tenantId, documentId)
+        return auditEventRepository.findAllByTenantIdAndDocumentIdOrderByCreatedAtAsc(tenantId, documentId)
                 .stream()
                 .map(e -> new AuditEventView(
-                        e.getId(),
-                        e.getDocumentId(),
-                        e.getEventType(),
+                        e.getId(), e.getDocumentId(), e.getEventType(),
                         e.getActorUser() != null ? e.getActorUser().getEmail() : null,
-                        e.getEventPayload(),
-                        e.getCreatedAt(),
-                        e.getEventHash(),
-                        e.getPreviousEventHash()))
+                        e.getEventPayload(), e.getEventHash(), e.getPreviousEventHash(),
+                        e.getCreatedAt()))
                 .toList();
     }
 
-    /**
-     * A single entry of the trail. The two hashes are exposed so a caller can re-link the chain
-     * and show that no entry was removed or reordered.
-     */
     public record AuditEventView(UUID id, UUID documentId, String eventType, String actorEmail,
-                                  Map<String, Object> payload, LocalDateTime createdAt,
-                                  String eventHash, String previousEventHash) {}
-
-    private String sha256(String input) {
-        try {
-            MessageDigest md = MessageDigest.getInstance("SHA-256");
-            byte[] hash = md.digest(input.getBytes(StandardCharsets.UTF_8));
-            return HexFormat.of().formatHex(hash);
-        } catch (NoSuchAlgorithmException e) {
-            log.warn("SHA-256 not available", e);
-            return "unavailable";
-        }
-    }
+                                  Map<String, Object> payload, String eventHash,
+                                  String previousEventHash, LocalDateTime createdAt) {}
 
     // ── Event type constants ──────────────────────────────────────────────
 

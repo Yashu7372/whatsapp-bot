@@ -95,8 +95,9 @@ public class DocumentController {
             @RequestParam(required = false) String docType) {
 
         UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        UUID userId   = UUID.fromString(claims.getSubject());
         return ResponseEntity.ok(
-                documentService.listDocuments(tenantId, docType)
+                documentService.listDocuments(tenantId, userId, docType)
                         .stream().map(this::toResponse).toList());
     }
 
@@ -106,7 +107,8 @@ public class DocumentController {
             @PathVariable UUID id) {
 
         UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        return ResponseEntity.ok(toResponse(documentService.getDocument(tenantId, id)));
+        UUID userId   = UUID.fromString(claims.getSubject());
+        return ResponseEntity.ok(toResponse(documentService.getDocument(tenantId, userId, id)));
     }
 
     @PutMapping(value = "/{id}", consumes = "multipart/form-data")
@@ -225,7 +227,8 @@ public class DocumentController {
 
         UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         UUID userId   = UUID.fromString(claims.getSubject());
-        documentService.decideStep(tenantId, userId, approvalId, req.decision(), req.comments());
+        documentService.decideStep(tenantId, userId, approvalId, req.decision(), req.comments(),
+                req.reviewOutcome());
         return ResponseEntity.ok().build();
     }
 
@@ -265,5 +268,9 @@ public class DocumentController {
 
     public record CommentRequest(String body) {}
 
-    public record DecisionRequest(String decision, String comments) {}
+    /**
+     * {@code reviewOutcome} carries the contractual return code (CODE_A..CODE_D). When present it
+     * decides the outcome; {@code decision} remains accepted for callers that do not use codes.
+     */
+    public record DecisionRequest(String decision, String comments, ReviewOutcome reviewOutcome) {}
 }

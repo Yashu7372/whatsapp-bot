@@ -25,27 +25,27 @@ public class ProjectController {
     @PostMapping
     public ResponseEntity<ProjectResponse> create(@AuthenticationPrincipal Claims claims,
                                                    @RequestBody ProjectService.CreateProjectRequest req) {
-        return ResponseEntity.ok(toResponse(projectService.create(tenantId(claims), req)));
+        return ResponseEntity.ok(toResponse(projectService.create(tenantId(claims), userId(claims), req)));
     }
 
     @GetMapping
     public ResponseEntity<List<ProjectResponse>> list(@AuthenticationPrincipal Claims claims,
                                                        @RequestParam(required = false) String status) {
-        return ResponseEntity.ok(projectService.list(tenantId(claims), status)
+        return ResponseEntity.ok(projectService.list(tenantId(claims), userId(claims), status)
                 .stream().map(ProjectController::toResponse).toList());
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<ProjectResponse> get(@AuthenticationPrincipal Claims claims,
                                                 @PathVariable UUID id) {
-        return ResponseEntity.ok(toResponse(projectService.get(tenantId(claims), id)));
+        return ResponseEntity.ok(toResponse(projectService.get(tenantId(claims), userId(claims), id)));
     }
 
     @PatchMapping("/{id}")
     public ResponseEntity<ProjectResponse> update(@AuthenticationPrincipal Claims claims,
                                                    @PathVariable UUID id,
                                                    @RequestBody ProjectService.UpdateProjectRequest req) {
-        return ResponseEntity.ok(toResponse(projectService.update(tenantId(claims), id, req)));
+        return ResponseEntity.ok(toResponse(projectService.update(tenantId(claims), userId(claims), id, req)));
     }
 
     // ── Participants ───────────────────────────────────────────────────────
@@ -55,7 +55,7 @@ public class ProjectController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id,
             @RequestBody ProjectService.AddParticipantRequest req) {
-        return ResponseEntity.ok(projectService.addParticipant(tenantId(claims), id, req));
+        return ResponseEntity.ok(projectService.addParticipant(tenantId(claims), userId(claims), id, req));
     }
 
     // Participants are mapped inside the service transaction — the organization is LAZY.
@@ -64,7 +64,7 @@ public class ProjectController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id,
             @RequestParam(defaultValue = "true") boolean activeOnly) {
-        return ResponseEntity.ok(projectService.listParticipants(tenantId(claims), id, activeOnly));
+        return ResponseEntity.ok(projectService.listParticipants(tenantId(claims), userId(claims), id, activeOnly));
     }
 
     /** The companies engaged beneath a participant — a contractor's subcontractors. */
@@ -72,13 +72,13 @@ public class ProjectController {
     public ResponseEntity<List<ProjectService.ParticipantView>> listEngaged(
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID participantId) {
-        return ResponseEntity.ok(projectService.listEngagedBy(tenantId(claims), participantId));
+        return ResponseEntity.ok(projectService.listEngagedBy(tenantId(claims), userId(claims), participantId));
     }
 
     @DeleteMapping("/participants/{participantId}")
     public ResponseEntity<Void> removeParticipant(@AuthenticationPrincipal Claims claims,
                                                    @PathVariable UUID participantId) {
-        projectService.removeParticipant(tenantId(claims), participantId);
+        projectService.removeParticipant(tenantId(claims), userId(claims), participantId);
         return ResponseEntity.noContent().build();
     }
 
@@ -89,7 +89,7 @@ public class ProjectController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id,
             @RequestBody DocumentNumberService.DefineSeriesRequest req) {
-        return ResponseEntity.ok(toResponse(numberService.defineSeries(tenantId(claims), id, req)));
+        return ResponseEntity.ok(toResponse(numberService.defineSeries(tenantId(claims), userId(claims), id, req)));
     }
 
     @GetMapping("/{id}/number-series")
@@ -103,6 +103,10 @@ public class ProjectController {
 
     private static UUID tenantId(Claims claims) {
         return UUID.fromString((String) claims.get("tenantId"));
+    }
+
+    private static UUID userId(Claims claims) {
+        return UUID.fromString(claims.getSubject());
     }
 
     private static ProjectResponse toResponse(ProjectEntity p) {

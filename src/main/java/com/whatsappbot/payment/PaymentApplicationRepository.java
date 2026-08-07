@@ -1,6 +1,8 @@
 package com.whatsappbot.payment;
 
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 
@@ -15,6 +17,27 @@ public interface PaymentApplicationRepository extends JpaRepository<PaymentAppli
                                                                                       UUID projectId);
 
     Optional<PaymentApplicationEntity> findByIdAndTenantId(UUID id, UUID tenantId);
+
+    /** Serialisation point for appending to a claim's audit chain. */
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT p FROM PaymentApplicationEntity p WHERE p.id = :id")
+    Optional<PaymentApplicationEntity> lockById(@Param("id") UUID id);
+
+    /**
+     * Claims that still hold a place on a document — anything not rejected. Used to stop the same
+     * approved work being claimed on several applications.
+     */
+    @Query("""
+            SELECT COUNT(i) FROM PaymentApplicationItemEntity i, PaymentApplicationEntity p
+            WHERE i.paymentApplicationId = p.id
+              AND i.documentId = :documentId
+              AND p.tenant.id = :tenantId
+              AND p.id <> :excludingApplicationId
+              AND p.status <> com.whatsappbot.payment.PaymentApplicationStatus.REJECTED
+            """)
+    long countLiveClaimsOnDocument(@Param("tenantId") UUID tenantId,
+                                    @Param("documentId") UUID documentId,
+                                    @Param("excludingApplicationId") UUID excludingApplicationId);
 
     boolean existsByProjectIdAndApplicationRefIgnoreCase(UUID projectId, String applicationRef);
 

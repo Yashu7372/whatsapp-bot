@@ -36,6 +36,10 @@ import static org.mockito.Mockito.when;
 class DocumentAuditServiceTest {
 
     @Mock private DocumentAuditEventRepository auditEventRepository;
+    // Appending locks the parent document row so concurrent events cannot fork the chain.
+    @Mock private DocumentRepository documentRepository;
+    @org.mockito.Spy private com.whatsappbot.audit.AuditChainHasher hasher =
+            new com.whatsappbot.audit.AuditChainHasher();
     @Mock private TenantRepository tenantRepository;
     @Mock private TenantUserRepository userRepository;
 

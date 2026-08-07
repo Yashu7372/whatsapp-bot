@@ -29,10 +29,14 @@ public class DocumentNumberService {
     private final DocumentNumberSeriesRepository seriesRepository;
     private final TenantRepository tenantRepository;
     private final ProjectProperties properties;
+    private final ProjectAccessService accessService;
 
     @Transactional
-    public DocumentNumberSeriesEntity defineSeries(UUID tenantId, UUID projectId,
+    public DocumentNumberSeriesEntity defineSeries(UUID tenantId, UUID userId, UUID projectId,
                                                     DefineSeriesRequest req) {
+        // Numbering is contract configuration: it decides the references every document on the
+        // project is known by, so it is administrator-only like the rest of project setup.
+        accessService.requireProjectAdministrator(accessService.requireActiveUser(tenantId, userId));
         String docType = normaliseDocType(req.docType());
 
         Optional<DocumentNumberSeriesEntity> existing =

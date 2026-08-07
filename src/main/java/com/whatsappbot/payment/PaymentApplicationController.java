@@ -28,13 +28,13 @@ public class PaymentApplicationController {
     public ResponseEntity<List<PaymentApplicationService.ApplicationView>> list(
             @AuthenticationPrincipal Claims claims,
             @RequestParam UUID projectId) {
-        return ResponseEntity.ok(paymentApplicationService.list(tenantId(claims), projectId));
+        return ResponseEntity.ok(paymentApplicationService.list(tenantId(claims), userId(claims), projectId));
     }
 
     @GetMapping("/{id}")
     public ResponseEntity<PaymentApplicationService.ApplicationView> get(
             @AuthenticationPrincipal Claims claims, @PathVariable UUID id) {
-        return ResponseEntity.ok(paymentApplicationService.getView(tenantId(claims), id));
+        return ResponseEntity.ok(paymentApplicationService.getView(tenantId(claims), userId(claims), id));
     }
 
     // ── Lines ──────────────────────────────────────────────────────────────
@@ -42,7 +42,7 @@ public class PaymentApplicationController {
     @GetMapping("/{id}/items")
     public ResponseEntity<List<PaymentApplicationService.ItemView>> listItems(
             @AuthenticationPrincipal Claims claims, @PathVariable UUID id) {
-        return ResponseEntity.ok(paymentApplicationService.listItems(tenantId(claims), id));
+        return ResponseEntity.ok(paymentApplicationService.listItems(tenantId(claims), userId(claims), id));
     }
 
     @PostMapping("/{id}/items")
@@ -50,14 +50,14 @@ public class PaymentApplicationController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id,
             @RequestBody PaymentApplicationService.AddItemRequest req) {
-        return ResponseEntity.ok(paymentApplicationService.addItem(tenantId(claims), id, req));
+        return ResponseEntity.ok(paymentApplicationService.addItem(tenantId(claims), userId(claims), id, req));
     }
 
     @DeleteMapping("/{id}/items/{itemId}")
     public ResponseEntity<Void> removeItem(@AuthenticationPrincipal Claims claims,
                                             @PathVariable UUID id,
                                             @PathVariable UUID itemId) {
-        paymentApplicationService.removeItem(tenantId(claims), id, itemId);
+        paymentApplicationService.removeItem(tenantId(claims), userId(claims), id, itemId);
         return ResponseEntity.noContent().build();
     }
 
@@ -66,7 +66,7 @@ public class PaymentApplicationController {
     @PostMapping("/{id}/submit")
     public ResponseEntity<PaymentApplicationService.ApplicationView> submit(
             @AuthenticationPrincipal Claims claims, @PathVariable UUID id) {
-        return ResponseEntity.ok(paymentApplicationService.submit(tenantId(claims), id));
+        return ResponseEntity.ok(paymentApplicationService.submit(tenantId(claims), userId(claims), id));
     }
 
     @PostMapping("/{id}/certify")
@@ -91,8 +91,10 @@ public class PaymentApplicationController {
 
     @PostMapping("/{id}/paid")
     public ResponseEntity<PaymentApplicationService.ApplicationView> markPaid(
-            @AuthenticationPrincipal Claims claims, @PathVariable UUID id) {
-        return ResponseEntity.ok(paymentApplicationService.markPaid(tenantId(claims), id));
+            @AuthenticationPrincipal Claims claims, @PathVariable UUID id,
+            @RequestBody(required = false) PaidRequest req) {
+        return ResponseEntity.ok(paymentApplicationService.markPaid(tenantId(claims), userId(claims), id,
+                req != null ? req.paymentReference() : null));
     }
 
     private static UUID tenantId(Claims claims) {
@@ -104,4 +106,7 @@ public class PaymentApplicationController {
     }
 
     public record DecisionRequest(String comments) {}
+
+    /** {@code paymentReference} links the release to the bank or ERP record that settled it. */
+    public record PaidRequest(String paymentReference) {}
 }

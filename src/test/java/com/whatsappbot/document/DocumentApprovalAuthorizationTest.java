@@ -54,6 +54,10 @@ class DocumentApprovalAuthorizationTest {
     @Mock private TenantUserRepository userRepository;
     @Mock private DocumentAuditService auditService;
     @Mock private ObjectMapper objectMapper;
+    @Mock private com.whatsappbot.project.ProjectService projectService;
+    @Mock private com.whatsappbot.project.ProjectAccessService accessService;
+    @Mock private com.whatsappbot.project.DocumentNumberService numberService;
+    @Mock private com.whatsappbot.project.OrganizationRepository organizationRepository;
 
     @InjectMocks private DocumentService service;
 
@@ -94,7 +98,7 @@ class DocumentApprovalAuthorizationTest {
         step.setStepName("Consultant review");
         step.setReviewerEmail(ASSIGNED_REVIEWER_EMAIL);
 
-        when(approvalRepository.findById(approvalId)).thenReturn(Optional.of(approval));
+        when(approvalRepository.lockByIdAndTenantId(approvalId, tenantId)).thenReturn(Optional.of(approval));
         when(stepRepository.findAllByApprovalIdOrderByStepIndex(approvalId)).thenReturn(List.of(step));
         when(documentRepository.findByIdAndTenantId(documentId, tenantId)).thenReturn(Optional.of(document));
         when(stepRepository.save(any())).thenAnswer(inv -> inv.getArgument(0));

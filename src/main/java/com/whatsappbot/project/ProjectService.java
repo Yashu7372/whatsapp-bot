@@ -1,5 +1,6 @@
 package com.whatsappbot.project;
 
+import com.whatsappbot.auth.TenantUserEntity;
 import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.domain.tenant.TenantRepository;
 import lombok.RequiredArgsConstructor;
@@ -23,11 +24,13 @@ public class ProjectService {
     private final OrganizationRepository organizationRepository;
     private final TenantRepository tenantRepository;
     private final ProjectProperties properties;
+    private final ProjectAccessService accessService;
 
     // ── Projects ───────────────────────────────────────────────────────────
 
     @Transactional
-    public ProjectEntity create(UUID tenantId, CreateProjectRequest req) {
+    public ProjectEntity create(UUID tenantId, UUID userId, CreateProjectRequest req) {
+        accessService.requireProjectAdministrator(accessService.requireActiveUser(tenantId, userId));
         String code = normaliseCode(req.projectCode());
         if (projectRepository.existsByTenantIdAndProjectCodeIgnoreCase(tenantId, code)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT,
@@ -56,13 +59,33 @@ public class ProjectService {
         return saved;
     }
 
+    /**
+     * Projects the caller may see. A tenant can host several projects with different companies on
+     * each, so participation — not tenancy alone — decides visibility.
+     */
     @Transactional(readOnly = true)
-    public List<ProjectEntity> list(UUID tenantId, String status) {
-        return status != null && !status.isBlank()
+    public List<ProjectEntity> list(UUID tenantId, UUID userId, String status) {
+        TenantUserEntity user = accessService.requireActiveUser(tenantId, userId);
+        List<ProjectEntity> projects = status != null && !status.isBlank()
                 ? projectRepository.findAllByTenantIdAndStatusOrderByCreatedAtDesc(tenantId, status.toUpperCase())
                 : projectRepository.findAllByTenantIdOrderByCreatedAtDesc(tenantId);
+        if (accessService.isTenantAdministrator(user)) {
+            return projects;
+        }
+        return projects.stream()
+                .filter(p -> accessService.canSeeProject(tenantId, p.getId(), user))
+                .toList();
     }
 
+    @Transactional(readOnly = true)
+    public ProjectEntity get(UUID tenantId, UUID userId, UUID projectId) {
+        ProjectEntity project = get(tenantId, projectId);
+        accessService.requireProjectVisibility(tenantId, projectId,
+                accessService.requireActiveUser(tenantId, userId));
+        return project;
+    }
+
+    /** Tenant-scoped read without the participation check, for internal callers. */
     @Transactional(readOnly = true)
     public ProjectEntity get(UUID tenantId, UUID projectId) {
         return projectRepository.findByIdAndTenantId(projectId, tenantId)
@@ -71,7 +94,8 @@ public class ProjectService {
     }
 
     @Transactional
-    public ProjectEntity update(UUID tenantId, UUID projectId, UpdateProjectRequest req) {
+    public ProjectEntity update(UUID tenantId, UUID userId, UUID projectId, UpdateProjectRequest req) {
+        accessService.requireProjectAdministrator(accessService.requireActiveUser(tenantId, userId));
         ProjectEntity project = get(tenantId, projectId);
         if (req.name() != null) project.setName(req.name());
         if (req.description() != null) project.setDescription(req.description());
@@ -93,7 +117,9 @@ public class ProjectService {
      * route back to the main contractor answerable for it.
      */
     @Transactional
-    public ParticipantView addParticipant(UUID tenantId, UUID projectId, AddParticipantRequest req) {
+    public ParticipantView addParticipant(UUID tenantId, UUID userId, UUID projectId,
+                                           AddParticipantRequest req) {
+        accessService.requireProjectAdministrator(accessService.requireActiveUser(tenantId, userId));
         ProjectEntity project = get(tenantId, projectId);
 
         OrganizationEntity org = organizationRepository
@@ -147,8 +173,11 @@ public class ProjectService {
      * throw.
      */
     @Transactional(readOnly = true)
-    public List<ParticipantView> listParticipants(UUID tenantId, UUID projectId, boolean activeOnly) {
+    public List<ParticipantView> listParticipants(UUID tenantId, UUID userId, UUID projectId,
+                                                   boolean activeOnly) {
         get(tenantId, projectId);
+        accessService.requireProjectVisibility(tenantId, projectId,
+                accessService.requireActiveUser(tenantId, userId));
         List<ProjectParticipantEntity> participants = activeOnly
                 ? participantRepository.findAllByTenantIdAndProjectIdAndActiveTrueOrderByPartyRoleAsc(
                         tenantId, projectId)
@@ -158,7 +187,13 @@ public class ProjectService {
 
     /** The companies engaged by the given participant — a contractor's subcontractors. */
     @Transactional(readOnly = true)
-    public List<ParticipantView> listEngagedBy(UUID tenantId, UUID participantId) {
+    public List<ParticipantView> listEngagedBy(UUID tenantId, UUID userId, UUID participantId) {
+        ProjectParticipantEntity parent = participantRepository
+                .findByIdAndTenantId(participantId, tenantId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Participant not found: " + participantId));
+        accessService.requireProjectVisibility(tenantId, parent.getProjectId(),
+                accessService.requireActiveUser(tenantId, userId));
         return participantRepository.findAllByTenantIdAndParentParticipantId(tenantId, participantId)
                 .stream().map(ProjectService::toView).toList();
     }
@@ -175,7 +210,8 @@ public class ProjectService {
                                    boolean active, java.time.LocalDateTime createdAt) {}
 
     @Transactional
-    public void removeParticipant(UUID tenantId, UUID participantId) {
+    public void removeParticipant(UUID tenantId, UUID userId, UUID participantId) {
+        accessService.requireProjectAdministrator(accessService.requireActiveUser(tenantId, userId));
         ProjectParticipantEntity participant = participantRepository
                 .findByIdAndTenantId(participantId, tenantId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,

@@ -84,6 +84,17 @@ public class PaymentApplicationEntity {
     @Column(name = "certified_at")
     private LocalDateTime certifiedAt;
 
+    /** Who released the money, and against what external payment record. */
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "paid_by")
+    private TenantUserEntity paidBy;
+
+    @Column(name = "paid_at")
+    private LocalDateTime paidAt;
+
+    @Column(name = "payment_reference", length = 120)
+    private String paymentReference;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     private TenantUserEntity createdBy;

@@ -68,6 +68,13 @@ public class DocumentEntity {
     private LocalDateTime dueAt;
 
     /**
+     * Value of work this document evidences. When set, a payment claim against it cannot exceed
+     * this — without a ceiling the only check on a claimed amount is that it is not negative.
+     */
+    @Column(name = "approved_value", precision = 18, scale = 2)
+    private java.math.BigDecimal approvedValue;
+
+    /**
      * The reviewer's return code. Held separately from {@link #status} because a document
      * returned CODE_B or CODE_C is neither plainly approved nor plainly rejected.
      */
