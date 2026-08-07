@@ -1,4 +1,4 @@
-package com.whatsappbot.auth;
+package com.whatsappbot.project;
 
 import com.whatsappbot.domain.tenant.TenantEntity;
 import jakarta.persistence.*;
@@ -9,12 +9,13 @@ import lombok.Setter;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
+/** A company taking part in one or more of the tenant's projects. */
 @Getter
 @Setter
 @NoArgsConstructor
 @Entity
-@Table(name = "tenant_users")
-public class TenantUserEntity {
+@Table(name = "organizations")
+public class OrganizationEntity {
 
     @Id
     @GeneratedValue(strategy = GenerationType.UUID)
@@ -24,31 +25,24 @@ public class TenantUserEntity {
     @JoinColumn(name = "tenant_id", nullable = false)
     private TenantEntity tenant;
 
-    @Column(name = "email", nullable = false, unique = true, length = 320)
-    private String email;
+    @Column(name = "name", nullable = false, length = 300)
+    private String name;
 
-    @Column(name = "password_hash", nullable = false)
-    private String passwordHash;
+    /** Short code that prefixes this company's document references. */
+    @Column(name = "org_code", nullable = false, length = 50)
+    private String orgCode;
 
-    @Column(name = "full_name", length = 200)
-    private String fullName;
+    @Column(name = "trade_license", length = 100)
+    private String tradeLicense;
 
-    @Enumerated(EnumType.STRING)
-    @Column(name = "role", nullable = false, length = 50)
-    private UserRole role = UserRole.ADMIN;
+    @Column(name = "contact_email", length = 320)
+    private String contactEmail;
 
-    /**
-     * The company this user works for. Null for tenant staff who are not attached to a
-     * participating organization (platform administrators, for example).
-     */
-    @Column(name = "organization_id")
-    private UUID organizationId;
+    @Column(name = "contact_phone", length = 50)
+    private String contactPhone;
 
     @Column(name = "active", nullable = false)
     private boolean active = true;
-
-    @Column(name = "last_login_at")
-    private LocalDateTime lastLoginAt;
 
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;

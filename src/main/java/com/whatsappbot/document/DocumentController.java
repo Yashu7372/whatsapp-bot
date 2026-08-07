@@ -2,6 +2,7 @@ package com.whatsappbot.document;
 
 import com.whatsappbot.features.FeatureAccessService;
 import com.whatsappbot.features.FeatureCode;
+import com.whatsappbot.project.ProjectAccessService;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -12,7 +13,6 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.IOException;
 import java.time.LocalDateTime;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 @RestController
@@ -23,6 +23,8 @@ public class DocumentController {
     private final DocumentService documentService;
     private final DocumentAuditService documentAuditService;
     private final FeatureAccessService featureAccessService;
+    private final ProjectAccessService projectAccessService;
+    private final EncryptedDocumentMetadataValidator encryptedMetadataValidator;
 
     @PostMapping(consumes = "multipart/form-data")
     public ResponseEntity<DocumentResponse> create(
@@ -30,18 +32,24 @@ public class DocumentController {
             @RequestPart("title") String title,
             @RequestPart(value = "docType", required = false) String docType,
             @RequestPart(value = "description", required = false) String description,
+            @RequestPart(value = "projectId", required = false) String projectId,
             @RequestPart(value = "file", required = false) MultipartFile file) throws IOException {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        UUID userId   = UUID.fromString(claims.getSubject());
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        var actor = projectAccessService.requireActiveUser(tenantId, userId);
 
-        featureAccessService.assertAccess(tenantId, FeatureCode.DOCUMENT_CONTROL);
+        UUID parsedProjectId = projectId != null && !projectId.isBlank()
+                ? UUID.fromString(projectId)
+                : null;
+        if (parsedProjectId != null) {
+            projectAccessService.requireProjectVisibility(tenantId, parsedProjectId, actor);
+        }
 
-        var req = new DocumentService.CreateDocumentRequest(title, docType, description, null);
+        var req = new DocumentService.CreateDocumentRequest(
+                title, docType, description, null, parsedProjectId);
         DocumentEntity doc = documentService.createDocument(tenantId, userId, req, file);
-        documentAuditService.record(tenantId, doc.getId(), userId,
-                DocumentAuditService.DOCUMENT_CREATED,
-                Map.of("title", doc.getTitle(), "docType", doc.getDocType()));
         return ResponseEntity.ok(toResponse(doc));
     }
 
@@ -54,35 +62,35 @@ public class DocumentController {
             @RequestPart(value = "encryptedFile", required = false) MultipartFile encryptedFile)
             throws IOException {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        UUID userId   = UUID.fromString(claims.getSubject());
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
 
-        featureAccessService.assertAccess(tenantId, FeatureCode.DOCUMENT_CONTROL);
+        assertDocumentAccess(tenantId);
         featureAccessService.assertFeatureEnabled(tenantId, FeatureCode.ZERO_KNOWLEDGE_STORAGE);
+        projectAccessService.requireActiveUser(tenantId, userId);
 
-        DocumentEntity doc = documentService.createEncryptedDocument(tenantId, userId, metadataJson, encryptedFile);
-        documentAuditService.record(tenantId, doc.getId(), userId,
-                DocumentAuditService.DOCUMENT_CREATED,
-                Map.of("title", doc.getTitle(), "mode", "ZERO_KNOWLEDGE"));
+        // Validate all metadata that can deterministically fail before StorageService is called.
+        // Object storage is outside the database transaction, so discovering a missing IV/hash
+        // only after writing the ciphertext leaves an orphan object when the DB rolls back.
+        encryptedMetadataValidator.validate(metadataJson, encryptedFile);
+
+        DocumentEntity doc = documentService.createEncryptedDocument(
+                tenantId, userId, metadataJson, encryptedFile);
         return ResponseEntity.ok(toResponse(doc));
     }
 
     // ── Audit trail ───────────────────────────────────────────────────────
 
     @GetMapping("/{id}/audit")
-    public ResponseEntity<List<AuditEventResponse>> auditTrail(
+    public ResponseEntity<List<DocumentAuditService.AuditEventView>> auditTrail(
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        featureAccessService.assertAccess(tenantId, FeatureCode.DOCUMENT_CONTROL);
-        return ResponseEntity.ok(
-                documentAuditService.getAuditTrail(tenantId, id)
-                        .stream().map(e -> new AuditEventResponse(
-                                e.getId(), e.getDocumentId(), e.getEventType(),
-                                e.getActorUser() != null ? e.getActorUser().getEmail() : null,
-                                e.getEventPayload(), e.getCreatedAt()))
-                        .toList());
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
+        return ResponseEntity.ok(documentAuditService.getAuditTrail(tenantId, id));
     }
 
     @PostMapping(consumes = "application/json")
@@ -90,8 +98,14 @@ public class DocumentController {
             @AuthenticationPrincipal Claims claims,
             @RequestBody DocumentService.CreateDocumentRequest req) throws IOException {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        UUID userId   = UUID.fromString(claims.getSubject());
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        var actor = projectAccessService.requireActiveUser(tenantId, userId);
+        if (req.projectId() != null) {
+            projectAccessService.requireProjectVisibility(tenantId, req.projectId(), actor);
+        }
+
         DocumentEntity doc = documentService.createDocument(tenantId, userId, req, null);
         return ResponseEntity.ok(toResponse(doc));
     }
@@ -101,9 +115,11 @@ public class DocumentController {
             @AuthenticationPrincipal Claims claims,
             @RequestParam(required = false) String docType) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
         return ResponseEntity.ok(
-                documentService.listDocuments(tenantId, docType)
+                documentService.listDocuments(tenantId, userId, docType)
                         .stream().map(this::toResponse).toList());
     }
 
@@ -112,8 +128,10 @@ public class DocumentController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        return ResponseEntity.ok(toResponse(documentService.getDocument(tenantId, id)));
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        return ResponseEntity.ok(toResponse(documentService.getDocument(tenantId, userId, id)));
     }
 
     @PutMapping(value = "/{id}", consumes = "multipart/form-data")
@@ -125,10 +143,14 @@ public class DocumentController {
             @RequestPart(value = "changeNotes", required = false) String changeNotes,
             @RequestPart(value = "file", required = false) MultipartFile file) throws IOException {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        UUID userId   = UUID.fromString(claims.getSubject());
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
+
         var req = new DocumentService.UpdateDocumentRequest(title, description, null, changeNotes);
-        return ResponseEntity.ok(toResponse(documentService.updateDocument(tenantId, userId, id, req, file)));
+        return ResponseEntity.ok(toResponse(
+                documentService.updateDocument(tenantId, userId, id, req, file)));
     }
 
     @PatchMapping(value = "/{id}", consumes = "application/json")
@@ -137,9 +159,12 @@ public class DocumentController {
             @PathVariable UUID id,
             @RequestBody DocumentService.UpdateDocumentRequest req) throws IOException {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        UUID userId   = UUID.fromString(claims.getSubject());
-        return ResponseEntity.ok(toResponse(documentService.updateDocument(tenantId, userId, id, req, null)));
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
+        return ResponseEntity.ok(toResponse(
+                documentService.updateDocument(tenantId, userId, id, req, null)));
     }
 
     @DeleteMapping("/{id}")
@@ -147,7 +172,10 @@ public class DocumentController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
         documentService.deleteDocument(tenantId, id);
         return ResponseEntity.noContent().build();
     }
@@ -159,7 +187,10 @@ public class DocumentController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
         return ResponseEntity.ok(
                 documentService.listVersions(tenantId, id)
                         .stream().map(v -> new VersionResponse(
@@ -175,7 +206,10 @@ public class DocumentController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
         return ResponseEntity.ok(
                 documentService.listComments(tenantId, id)
                         .stream().map(c -> new CommentResponse(
@@ -191,8 +225,10 @@ public class DocumentController {
             @PathVariable UUID id,
             @RequestBody CommentRequest req) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        UUID userId   = UUID.fromString(claims.getSubject());
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
         var comment = documentService.addComment(tenantId, userId, id, req.body());
         return ResponseEntity.ok(new CommentResponse(
                 comment.getId(), comment.getDocumentId(),
@@ -207,8 +243,10 @@ public class DocumentController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        UUID userId   = UUID.fromString(claims.getSubject());
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
         var approval = documentService.submitForApproval(tenantId, userId, id);
         return ResponseEntity.ok(toApprovalResponse(approval));
     }
@@ -218,7 +256,10 @@ public class DocumentController {
             @AuthenticationPrincipal Claims claims,
             @PathVariable UUID id) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        requireDocumentAccess(tenantId, userId, id);
         return ResponseEntity.ok(
                 documentService.listApprovals(tenantId, id)
                         .stream().map(this::toApprovalResponse).toList());
@@ -230,10 +271,34 @@ public class DocumentController {
             @PathVariable UUID approvalId,
             @RequestBody DecisionRequest req) {
 
-        UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
-        UUID userId   = UUID.fromString(claims.getSubject());
-        documentService.decideStep(tenantId, userId, approvalId, req.decision(), req.comments());
+        UUID tenantId = tenantId(claims);
+        UUID userId = userId(claims);
+        assertDocumentAccess(tenantId);
+        // decideStep performs the stronger approval-specific checks: active tenant membership,
+        // assigned-reviewer identity and the pessimistic lock around the state transition.
+        documentService.decideStep(tenantId, userId, approvalId, req.decision(), req.comments(),
+                req.reviewOutcome());
         return ResponseEntity.ok().build();
+    }
+
+    // ── Access helpers ─────────────────────────────────────────────────────
+
+    private void assertDocumentAccess(UUID tenantId) {
+        featureAccessService.assertAccess(tenantId, FeatureCode.DOCUMENT_CONTROL);
+    }
+
+    private void requireDocumentAccess(UUID tenantId, UUID userId, UUID documentId) {
+        projectAccessService.requireActiveUser(tenantId, userId);
+        // The caller-aware service read enforces project participation for project documents.
+        documentService.getDocument(tenantId, userId, documentId);
+    }
+
+    private static UUID tenantId(Claims claims) {
+        return UUID.fromString((String) claims.get("tenantId"));
+    }
+
+    private static UUID userId(Claims claims) {
+        return UUID.fromString(claims.getSubject());
     }
 
     // ── Mappers ───────────────────────────────────────────────────────────
@@ -242,7 +307,9 @@ public class DocumentController {
         return new DocumentResponse(
                 d.getId(), d.getTitle(), d.getDocType(), d.getDescription(),
                 d.getTags(), d.getCurrentVersion(), d.getStatus().name(),
-                d.getWorkflowId(), d.getCreatedAt(), d.getUpdatedAt());
+                d.getWorkflowId(), d.getProjectId(), d.getOriginatorOrgId(), d.getDocumentCode(),
+                d.getDueAt(), d.getReviewOutcome(),
+                d.getCreatedAt(), d.getUpdatedAt());
     }
 
     private ApprovalResponse toApprovalResponse(DocumentApprovalEntity a) {
@@ -254,7 +321,10 @@ public class DocumentController {
 
     public record DocumentResponse(UUID id, String title, String docType, String description,
                                     String[] tags, int currentVersion, String status,
-                                    UUID workflowId, LocalDateTime createdAt, LocalDateTime updatedAt) {}
+                                    UUID workflowId, UUID projectId, UUID originatorOrgId,
+                                    String documentCode, LocalDateTime dueAt,
+                                    ReviewOutcome reviewOutcome,
+                                    LocalDateTime createdAt, LocalDateTime updatedAt) {}
 
     public record VersionResponse(UUID id, UUID documentId, int versionNum,
                                    UUID assetId, String changeNotes, LocalDateTime createdAt) {}
@@ -267,9 +337,9 @@ public class DocumentController {
 
     public record CommentRequest(String body) {}
 
-    public record DecisionRequest(String decision, String comments) {}
-
-    public record AuditEventResponse(UUID id, UUID documentId, String eventType,
-                                      String actorEmail, java.util.Map<String, Object> payload,
-                                      LocalDateTime createdAt) {}
+    /**
+     * {@code reviewOutcome} carries the contractual return code (CODE_A..CODE_D). When present it
+     * decides the outcome; {@code decision} remains accepted for callers that do not use codes.
+     */
+    public record DecisionRequest(String decision, String comments, ReviewOutcome reviewOutcome) {}
 }
