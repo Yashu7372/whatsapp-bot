@@ -29,6 +29,7 @@ public class DocumentController {
             @RequestPart("title") String title,
             @RequestPart(value = "docType", required = false) String docType,
             @RequestPart(value = "description", required = false) String description,
+            @RequestPart(value = "projectId", required = false) String projectId,
             @RequestPart(value = "file", required = false) MultipartFile file) throws IOException {
 
         UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
@@ -36,7 +37,8 @@ public class DocumentController {
 
         featureAccessService.assertAccess(tenantId, FeatureCode.DOCUMENT_CONTROL);
 
-        var req = new DocumentService.CreateDocumentRequest(title, docType, description, null);
+        var req = new DocumentService.CreateDocumentRequest(title, docType, description, null,
+                projectId != null && !projectId.isBlank() ? UUID.fromString(projectId) : null);
         // Audit events are recorded inside DocumentService, in the same transaction as the
         // change itself, so every entry point is covered and a rolled-back write cannot leave
         // an event behind claiming it happened.
@@ -233,7 +235,9 @@ public class DocumentController {
         return new DocumentResponse(
                 d.getId(), d.getTitle(), d.getDocType(), d.getDescription(),
                 d.getTags(), d.getCurrentVersion(), d.getStatus().name(),
-                d.getWorkflowId(), d.getCreatedAt(), d.getUpdatedAt());
+                d.getWorkflowId(), d.getProjectId(), d.getOriginatorOrgId(), d.getDocumentCode(),
+                d.getDueAt(), d.getReviewOutcome(),
+                d.getCreatedAt(), d.getUpdatedAt());
     }
 
     private ApprovalResponse toApprovalResponse(DocumentApprovalEntity a) {
@@ -245,7 +249,10 @@ public class DocumentController {
 
     public record DocumentResponse(UUID id, String title, String docType, String description,
                                     String[] tags, int currentVersion, String status,
-                                    UUID workflowId, LocalDateTime createdAt, LocalDateTime updatedAt) {}
+                                    UUID workflowId, UUID projectId, UUID originatorOrgId,
+                                    String documentCode, LocalDateTime dueAt,
+                                    ReviewOutcome reviewOutcome,
+                                    LocalDateTime createdAt, LocalDateTime updatedAt) {}
 
     public record VersionResponse(UUID id, UUID documentId, int versionNum,
                                    UUID assetId, String changeNotes, LocalDateTime createdAt) {}

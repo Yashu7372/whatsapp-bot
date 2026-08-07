@@ -75,4 +75,10 @@ app:
   publishing:
     scheduler:
       interval-ms: ${PUBLISHING_SCHEDULER_INTERVAL_MS:30000}
+  project:
+    default-currency: ${PROJECT_DEFAULT_CURRENCY:AED}
+    default-retention-percent: ${PROJECT_DEFAULT_RETENTION_PERCENT:10.00}
+    default-number-padding: ${PROJECT_DEFAULT_NUMBER_PADDING:4}
+    reference-separator: "${PROJECT_REFERENCE_SEPARATOR:-}"
+    default-status: ${PROJECT_DEFAULT_STATUS:ACTIVE}
 

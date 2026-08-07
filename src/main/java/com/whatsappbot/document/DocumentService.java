@@ -7,6 +7,11 @@ import com.whatsappbot.auth.TenantUserRepository;
 import com.whatsappbot.auth.UserRole;
 import com.whatsappbot.domain.tenant.TenantEntity;
 import com.whatsappbot.domain.tenant.TenantRepository;
+import com.whatsappbot.project.OrganizationEntity;
+import com.whatsappbot.project.OrganizationRepository;
+import com.whatsappbot.project.DocumentNumberService;
+import com.whatsappbot.project.ProjectEntity;
+import com.whatsappbot.project.ProjectService;
 import com.whatsappbot.storage.StorageService;
 import com.whatsappbot.storage.StoredFile;
 import com.whatsappbot.storage.MediaAssetEntity;
@@ -50,6 +55,9 @@ public class DocumentService {
     private final TenantRepository tenantRepository;
     private final TenantUserRepository userRepository;
     private final DocumentAuditService auditService;
+    private final ProjectService projectService;
+    private final DocumentNumberService numberService;
+    private final OrganizationRepository organizationRepository;
     private final ObjectMapper objectMapper;
 
     // ── Document CRUD ──────────────────────────────────────────────────────
@@ -73,6 +81,8 @@ public class DocumentService {
         workflowRepository.findByTenantIdAndDocType(tenantId, doc.getDocType())
                 .map(DocumentControlWorkflowEntity::getId)
                 .ifPresent(doc::setWorkflowId);
+
+        applyProjectContext(tenantId, doc, user, req.projectId());
 
         doc = documentRepository.save(doc);
 
@@ -365,6 +375,40 @@ public class DocumentService {
     }
 
     /**
+     * Places a document into project delivery: records which project and which company it came
+     * from, takes the next reference in that project's series for its type, and sets the
+     * contractual reply deadline from the same series.
+     *
+     * <p>Documents without a project keep working exactly as before — this is additive, so
+     * existing non-project document flows are untouched.
+     */
+    private void applyProjectContext(UUID tenantId, DocumentEntity doc, TenantUserEntity user,
+                                      UUID projectId) {
+        if (projectId == null) {
+            return;
+        }
+        ProjectEntity project = projectService.get(tenantId, projectId);
+        doc.setProjectId(project.getId());
+
+        // The originating company is taken from the user's own organization, never from the
+        // request: a contractor must not be able to raise a document as though it came from
+        // the consultant.
+        UUID originatorOrgId = user != null ? user.getOrganizationId() : null;
+        doc.setOriginatorOrgId(originatorOrgId);
+
+        String orgCode = originatorOrgId == null ? null
+                : organizationRepository.findByIdAndTenantId(originatorOrgId, tenantId)
+                        .map(OrganizationEntity::getOrgCode)
+                        .orElse(null);
+
+        doc.setDocumentCode(
+                numberService.nextReference(tenantId, project.getId(), doc.getDocType(), orgCode));
+
+        numberService.responseDaysFor(tenantId, project.getId(), doc.getDocType())
+                .ifPresent(days -> doc.setDueAt(LocalDateTime.now().plusDays(days)));
+    }
+
+    /**
      * Loads the acting user and confirms they still belong to this tenant and are active.
      *
      * <p>The previous implementation used {@code findById(userId).orElse(null)} and carried on
@@ -535,7 +579,8 @@ public class DocumentService {
 
     // ── Request records ────────────────────────────────────────────────────
 
-    public record CreateDocumentRequest(String title, String docType, String description, String[] tags) {}
+    public record CreateDocumentRequest(String title, String docType, String description, String[] tags,
+                                         UUID projectId) {}
     public record UpdateDocumentRequest(String title, String description, String[] tags, String changeNotes) {}
     public record CreateWorkflowRequest(String name, String docType, String steps) {}
     public record UpdateWorkflowRequest(String name, String steps, Boolean active) {}
