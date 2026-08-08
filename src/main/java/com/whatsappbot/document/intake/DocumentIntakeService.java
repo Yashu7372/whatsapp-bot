@@ -17,6 +17,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -50,25 +52,26 @@ public class DocumentIntakeService {
 
     /**
      * DB writes for the media asset, document and first version share one transaction. The object
-     * store cannot participate in that transaction, so any failure after putObject is compensated
-     * by deleting the just-written object before the exception escapes.
+     * store cannot participate in that transaction, so the stored object is registered for
+     * compensating deletion if this transaction (including an outer caller's work) rolls back.
      */
     @Transactional
     public DocumentEntity ingest(IntakeRequest req, String originalFileName, String contentType,
                                  InputStream data) {
         Path temp = bufferToTempFile(data);
-        StoredObjectRef ref = null;
         try {
             long sizeBytes = temp.toFile().length();
             ScanResult scan = scan(temp);
             String scanStatus = resolveScanStatus(scan);
 
+            StoredObjectRef ref;
             try (InputStream storeStream = Files.newInputStream(temp)) {
                 ref = objectStorageService.putObject(req.tenantId(), originalFileName, contentType,
                         storeStream, sizeBytes);
             } catch (IOException e) {
                 throw new UncheckedIOException("Failed to read buffered upload for storage", e);
             }
+            registerRollbackCleanup(req.tenantId(), ref.objectKey());
 
             MediaAssetEntity asset = new MediaAssetEntity();
             asset.setTenant(tenantRepository.getReferenceById(req.tenantId()));
@@ -90,14 +93,23 @@ public class DocumentIntakeService {
             return documentService.createDocumentFromIntake(req.tenantId(), req.channel(), req.docType(),
                     req.projectId(), req.title(), req.description(), req.uploaderName(),
                     req.uploaderEmail(), req.uploadLinkId(), asset);
-        } catch (RuntimeException e) {
-            if (ref != null) {
-                objectStorageService.deleteObject(req.tenantId(), ref.objectKey());
-            }
-            throw e;
         } finally {
             deleteQuietly(temp);
         }
+    }
+
+    private void registerRollbackCleanup(UUID tenantId, String objectKey) {
+        if (!TransactionSynchronizationManager.isSynchronizationActive()) {
+            throw new IllegalStateException("Document intake requires active transaction synchronization");
+        }
+        TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+            @Override
+            public void afterCompletion(int status) {
+                if (status != TransactionSynchronization.STATUS_COMMITTED) {
+                    objectStorageService.deleteObject(tenantId, objectKey);
+                }
+            }
+        });
     }
 
     private ScanResult scan(Path temp) {
