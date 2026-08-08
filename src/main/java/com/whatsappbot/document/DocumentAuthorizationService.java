@@ -39,6 +39,21 @@ public class DocumentAuthorizationService {
         evaluate(tenantId, userId, documentId, ISSUE, true);
     }
 
+    /**
+     * Approval requires both document visibility and the project-side authority to approve.
+     * The existing workflow service then applies the narrower named-reviewer/current-step check.
+     */
+    @Transactional(readOnly = true)
+    public void requireApprovalDecision(UUID tenantId, UUID userId, UUID approvalId) {
+        UUID documentId=repository.documentIdForApproval(tenantId,approvalId);
+        if(documentId==null) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Approval not found: "+approvalId);
+        requireView(tenantId,userId,documentId);
+        DocumentAuthorizationRepository.DocumentSecurity security=repository.security(tenantId,documentId);
+        if(security!=null && security.projectId()!=null){
+            projectAuthorization.require(tenantId,userId,security.projectId(),ProjectPermission.DOCUMENT_APPROVE);
+        }
+    }
+
     @Transactional(readOnly = true)
     public boolean canView(UUID tenantId, UUID userId, UUID documentId) {
         try {
