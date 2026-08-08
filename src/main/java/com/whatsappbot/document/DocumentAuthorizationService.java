@@ -38,8 +38,12 @@ public class DocumentAuthorizationService {
     public void requireApprovalDecision(UUID tenantId, UUID userId, UUID approvalId) {
         DocumentAuthorizationRepository.ApprovalAuthority ctx=repository.approvalAuthority(tenantId,approvalId);
         if(ctx==null) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Pending approval not found: "+approvalId);
-        requireView(tenantId,userId,ctx.documentId());
-        if(ctx.projectId()==null) return;
+        TenantUserEntity actor=accessService.requireActiveUser(tenantId,userId);
+        if(ctx.projectId()==null){
+            if(ctx.reviewerEmail()!=null&&!ctx.reviewerEmail().equalsIgnoreCase(actor.getEmail()))
+                throw new ResponseStatusException(HttpStatus.FORBIDDEN,"This workflow step is assigned to another reviewer");
+            return;
+        }
 
         ProjectPermission permission=switch(ctx.authorityType()){
             case "INTERNAL_REVIEW" -> ProjectPermission.DOCUMENT_REVIEW_INTERNAL;
@@ -51,11 +55,12 @@ public class DocumentAuthorizationService {
         ProjectAuthorizationService.Decision decision=projectAuthorization.require(tenantId,userId,ctx.projectId(),permission);
         if(accessService.isTenantAdministrator(decision.actor())) return;
 
-        // A workflow can narrow the authority further to one company or one project party role.
+        if("USER".equals(ctx.assignmentType()) && ctx.reviewerEmail()!=null
+                && !ctx.reviewerEmail().equalsIgnoreCase(decision.actor().getEmail()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"This workflow step is assigned to another reviewer");
         if("ORGANIZATION".equals(ctx.assignmentType()) && ctx.assignmentOrganizationId()!=null
-                && !ctx.assignmentOrganizationId().equals(decision.organizationId())){
+                && !ctx.assignmentOrganizationId().equals(decision.organizationId()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"This workflow step is assigned to another organization");
-        }
         if("PARTY_ROLE".equals(ctx.assignmentType()) && ctx.assignmentPartyRole()!=null){
             PartyRole required;
             try { required=PartyRole.valueOf(ctx.assignmentPartyRole()); }
@@ -63,13 +68,9 @@ public class DocumentAuthorizationService {
             if(!decision.partyRoles().contains(required))
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN,"This workflow step is assigned to "+required);
         }
-
-        // Internal review must stay with the document's originating delivery company even when
-        // the template forgot to repeat organizationId explicitly.
         if("INTERNAL_REVIEW".equals(ctx.authorityType()) && ctx.originatorOrganizationId()!=null
-                && !ctx.originatorOrganizationId().equals(decision.organizationId())){
+                && !ctx.originatorOrganizationId().equals(decision.organizationId()))
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Internal review belongs to the originating organization");
-        }
     }
 
     @Transactional(readOnly = true)
@@ -81,7 +82,6 @@ public class DocumentAuthorizationService {
     private void evaluate(UUID tenantId, UUID userId, UUID documentId, String grantPermission, boolean mutation) {
         DocumentAuthorizationRepository.DocumentSecurity security=repository.security(tenantId,documentId);
         if(security==null) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Document not found: "+documentId);
-
         TenantUserEntity actor=accessService.requireActiveUser(tenantId,userId);
         if(security.projectId()==null){
             if(!mutation) return;
@@ -90,13 +90,11 @@ public class DocumentAuthorizationService {
             if(manager||repository.hasGrant(tenantId,documentId,actor.getId(),actor.getOrganizationId(),actor.getRole().name(),grantPermission))return;
             throw denied(documentId);
         }
-
         ProjectPermission projectPermission=mutation
                 ?(ISSUE.equals(grantPermission)?ProjectPermission.DOCUMENT_ISSUE:ProjectPermission.DOCUMENT_EDIT)
                 :ProjectPermission.DOCUMENT_VIEW;
         projectAuthorization.require(tenantId,userId,security.projectId(),projectPermission);
         if(accessService.isTenantAdministrator(actor)) return;
-
         boolean owner=actor.getOrganizationId()!=null&&actor.getOrganizationId().equals(security.originatorOrganizationId());
         boolean explicit=repository.hasGrant(tenantId,documentId,actor.getId(),actor.getOrganizationId(),actor.getRole().name(),grantPermission);
         boolean assigned=!mutation&&repository.assignedToApproval(tenantId,documentId,actor.getEmail());
@@ -110,7 +108,5 @@ public class DocumentAuthorizationService {
         if(!allowed) throw denied(documentId);
     }
 
-    private static ResponseStatusException denied(UUID documentId){
-        return new ResponseStatusException(HttpStatus.FORBIDDEN,"Document access denied by project/company/security policy: "+documentId);
-    }
+    private static ResponseStatusException denied(UUID documentId){return new ResponseStatusException(HttpStatus.FORBIDDEN,"Document access denied by project/company/security policy: "+documentId);}
 }
