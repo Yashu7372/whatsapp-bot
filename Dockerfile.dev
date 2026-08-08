@@ -1,0 +1,17 @@
+# Development-only image — uses mvn spring-boot:run with live source mount.
+# Source is bind-mounted at /workspace via docker-compose.dev.yml.
+# Do NOT use for production.
+FROM maven:3.9.6-eclipse-temurin-21
+
+WORKDIR /workspace
+
+# Pre-fetch dependencies into the image layer so the named volume inherits
+# them on first run (Docker copies image contents into an empty named volume).
+COPY pom.xml .
+RUN mvn dependency:go-offline -q
+
+EXPOSE 8080
+
+# Source volume is mounted over /workspace at runtime.
+# Maven recompiles from source on every container start.
+CMD ["mvn", "spring-boot:run"]
