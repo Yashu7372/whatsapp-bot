@@ -13,20 +13,17 @@ import java.util.UUID;
 
 public interface PaymentApplicationRepository extends JpaRepository<PaymentApplicationEntity, UUID> {
 
-    List<PaymentApplicationEntity> findAllByTenantIdAndProjectIdOrderByCreatedAtDesc(UUID tenantId,
-                                                                                      UUID projectId);
+    List<PaymentApplicationEntity> findAllByTenantIdAndProjectIdOrderByCreatedAtDesc(UUID tenantId, UUID projectId);
+
+    List<PaymentApplicationEntity> findAllByTenantIdAndProjectIdAndClaimedByOrgIdOrderByCreatedAtDesc(
+            UUID tenantId, UUID projectId, UUID claimedByOrgId);
 
     Optional<PaymentApplicationEntity> findByIdAndTenantId(UUID id, UUID tenantId);
 
-    /** Serialisation point for appending to a claim's audit chain. */
     @Lock(LockModeType.PESSIMISTIC_WRITE)
     @Query("SELECT p FROM PaymentApplicationEntity p WHERE p.id = :id")
     Optional<PaymentApplicationEntity> lockById(@Param("id") UUID id);
 
-    /**
-     * Claims that still hold a place on a document — anything not rejected. Used to stop the same
-     * approved work being claimed on several applications.
-     */
     @Query("""
             SELECT COUNT(i) FROM PaymentApplicationItemEntity i, PaymentApplicationEntity p
             WHERE i.paymentApplicationId = p.id
@@ -41,10 +38,6 @@ public interface PaymentApplicationRepository extends JpaRepository<PaymentAppli
 
     boolean existsByProjectIdAndApplicationRefIgnoreCase(UUID projectId, String applicationRef);
 
-    /**
-     * Total already certified on this project for this claimant, which becomes the new claim's
-     * opening position. Returns zero rather than null when nothing has been certified yet.
-     */
     @Query("""
             SELECT COALESCE(SUM(p.netCertified), 0) FROM PaymentApplicationEntity p
             WHERE p.tenant.id = :tenantId

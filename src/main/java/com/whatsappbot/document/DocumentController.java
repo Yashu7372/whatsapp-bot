@@ -3,6 +3,8 @@ package com.whatsappbot.document;
 import com.whatsappbot.features.FeatureAccessService;
 import com.whatsappbot.features.FeatureCode;
 import com.whatsappbot.project.ProjectAccessService;
+import com.whatsappbot.project.ProjectAuthorizationService;
+import com.whatsappbot.project.ProjectPermission;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -19,327 +21,80 @@ import java.util.UUID;
 @RequestMapping("/api/v1/documents")
 @RequiredArgsConstructor
 public class DocumentController {
-
     private final DocumentService documentService;
     private final DocumentAuditService documentAuditService;
     private final FeatureAccessService featureAccessService;
     private final ProjectAccessService projectAccessService;
+    private final ProjectAuthorizationService projectAuthorizationService;
+    private final DocumentAuthorizationService documentAuthorizationService;
+    private final ApprovalDecisionCoordinator approvalDecisionCoordinator;
     private final EncryptedDocumentMetadataValidator encryptedMetadataValidator;
 
-    @PostMapping(consumes = "multipart/form-data")
-    public ResponseEntity<DocumentResponse> create(
-            @AuthenticationPrincipal Claims claims,
-            @RequestPart("title") String title,
-            @RequestPart(value = "docType", required = false) String docType,
-            @RequestPart(value = "description", required = false) String description,
-            @RequestPart(value = "projectId", required = false) String projectId,
-            @RequestPart(value = "file", required = false) MultipartFile file) throws IOException {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        var actor = projectAccessService.requireActiveUser(tenantId, userId);
-
-        UUID parsedProjectId = projectId != null && !projectId.isBlank()
-                ? UUID.fromString(projectId)
-                : null;
-        if (parsedProjectId != null) {
-            projectAccessService.requireProjectVisibility(tenantId, parsedProjectId, actor);
-        }
-
-        var req = new DocumentService.CreateDocumentRequest(
-                title, docType, description, null, parsedProjectId);
-        DocumentEntity doc = documentService.createDocument(tenantId, userId, req, file);
-        return ResponseEntity.ok(toResponse(doc));
+    @PostMapping(consumes="multipart/form-data")
+    public ResponseEntity<DocumentResponse> create(@AuthenticationPrincipal Claims claims,@RequestPart("title") String title,
+            @RequestPart(value="docType",required=false) String docType,@RequestPart(value="description",required=false) String description,
+            @RequestPart(value="projectId",required=false) String projectId,@RequestPart(value="file",required=false) MultipartFile file) throws IOException{
+        UUID tenantId=tenantId(claims),userId=userId(claims);assertDocumentAccess(tenantId);projectAccessService.requireActiveUser(tenantId,userId);
+        UUID parsed=projectId!=null&&!projectId.isBlank()?UUID.fromString(projectId):null;
+        if(parsed!=null)projectAuthorizationService.require(tenantId,userId,parsed,ProjectPermission.DOCUMENT_CREATE);
+        return ResponseEntity.ok(toResponse(documentService.createDocument(tenantId,userId,new DocumentService.CreateDocumentRequest(title,docType,description,null,parsed),file)));
     }
-
-    // ── Zero-knowledge encrypted upload ───────────────────────────────────
-
-    @PostMapping(value = "/encrypted", consumes = "multipart/form-data")
-    public ResponseEntity<DocumentResponse> createEncrypted(
-            @AuthenticationPrincipal Claims claims,
-            @RequestPart("metadata") String metadataJson,
-            @RequestPart(value = "encryptedFile", required = false) MultipartFile encryptedFile)
-            throws IOException {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-
-        assertDocumentAccess(tenantId);
-        featureAccessService.assertFeatureEnabled(tenantId, FeatureCode.ZERO_KNOWLEDGE_STORAGE);
-        projectAccessService.requireActiveUser(tenantId, userId);
-
-        // Validate all metadata that can deterministically fail before StorageService is called.
-        // Object storage is outside the database transaction, so discovering a missing IV/hash
-        // only after writing the ciphertext leaves an orphan object when the DB rolls back.
-        encryptedMetadataValidator.validate(metadataJson, encryptedFile);
-
-        DocumentEntity doc = documentService.createEncryptedDocument(
-                tenantId, userId, metadataJson, encryptedFile);
-        return ResponseEntity.ok(toResponse(doc));
+    @PostMapping(value="/encrypted",consumes="multipart/form-data")
+    public ResponseEntity<DocumentResponse> createEncrypted(@AuthenticationPrincipal Claims claims,@RequestPart("metadata") String metadataJson,
+            @RequestPart(value="encryptedFile",required=false) MultipartFile encryptedFile)throws IOException{
+        UUID tenantId=tenantId(claims),userId=userId(claims);assertDocumentAccess(tenantId);featureAccessService.assertFeatureEnabled(tenantId,FeatureCode.ZERO_KNOWLEDGE_STORAGE);
+        projectAccessService.requireActiveUser(tenantId,userId);encryptedMetadataValidator.validate(metadataJson,encryptedFile);
+        return ResponseEntity.ok(toResponse(documentService.createEncryptedDocument(tenantId,userId,metadataJson,encryptedFile)));
     }
-
-    // ── Audit trail ───────────────────────────────────────────────────────
-
     @GetMapping("/{id}/audit")
-    public ResponseEntity<List<DocumentAuditService.AuditEventView>> auditTrail(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-        return ResponseEntity.ok(documentAuditService.getAuditTrail(tenantId, id));
-    }
-
-    @PostMapping(consumes = "application/json")
-    public ResponseEntity<DocumentResponse> createJson(
-            @AuthenticationPrincipal Claims claims,
-            @RequestBody DocumentService.CreateDocumentRequest req) throws IOException {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        var actor = projectAccessService.requireActiveUser(tenantId, userId);
-        if (req.projectId() != null) {
-            projectAccessService.requireProjectVisibility(tenantId, req.projectId(), actor);
-        }
-
-        DocumentEntity doc = documentService.createDocument(tenantId, userId, req, null);
-        return ResponseEntity.ok(toResponse(doc));
-    }
-
+    public ResponseEntity<List<DocumentAuditService.AuditEventView>> auditTrail(@AuthenticationPrincipal Claims claims,@PathVariable UUID id){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireView(t,u,id);return ResponseEntity.ok(documentAuditService.getAuditTrail(t,id));}
+    @PostMapping(consumes="application/json")
+    public ResponseEntity<DocumentResponse> createJson(@AuthenticationPrincipal Claims claims,@RequestBody DocumentService.CreateDocumentRequest req)throws IOException{UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);projectAccessService.requireActiveUser(t,u);if(req.projectId()!=null)projectAuthorizationService.require(t,u,req.projectId(),ProjectPermission.DOCUMENT_CREATE);return ResponseEntity.ok(toResponse(documentService.createDocument(t,u,req,null)));}
     @GetMapping
-    public ResponseEntity<List<DocumentResponse>> list(
-            @AuthenticationPrincipal Claims claims,
-            @RequestParam(required = false) String docType) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        return ResponseEntity.ok(
-                documentService.listDocuments(tenantId, userId, docType)
-                        .stream().map(this::toResponse).toList());
+    public ResponseEntity<DocumentPageResponse> list(@AuthenticationPrincipal Claims claims,
+                                                     @RequestParam(required = false) String docType,
+                                                     @RequestParam(defaultValue = "0") int page,
+                                                     @RequestParam(defaultValue = "50") int size) {
+        UUID t = tenantId(claims), u = userId(claims);
+        assertDocumentAccess(t);
+        DocumentService.DocumentPage result = documentService.listDocuments(t, u, docType, page, size);
+        return ResponseEntity.ok(new DocumentPageResponse(
+                result.documents().stream().map(this::toResponse).toList(),
+                result.page(), result.size(), result.hasMore()));
     }
-
     @GetMapping("/{id}")
-    public ResponseEntity<DocumentResponse> get(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        return ResponseEntity.ok(toResponse(documentService.getDocument(tenantId, userId, id)));
-    }
-
-    @PutMapping(value = "/{id}", consumes = "multipart/form-data")
-    public ResponseEntity<DocumentResponse> update(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id,
-            @RequestPart(value = "title", required = false) String title,
-            @RequestPart(value = "description", required = false) String description,
-            @RequestPart(value = "changeNotes", required = false) String changeNotes,
-            @RequestPart(value = "file", required = false) MultipartFile file) throws IOException {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-
-        var req = new DocumentService.UpdateDocumentRequest(title, description, null, changeNotes);
-        return ResponseEntity.ok(toResponse(
-                documentService.updateDocument(tenantId, userId, id, req, file)));
-    }
-
-    @PatchMapping(value = "/{id}", consumes = "application/json")
-    public ResponseEntity<DocumentResponse> patch(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id,
-            @RequestBody DocumentService.UpdateDocumentRequest req) throws IOException {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-        return ResponseEntity.ok(toResponse(
-                documentService.updateDocument(tenantId, userId, id, req, null)));
-    }
-
+    public ResponseEntity<DocumentResponse> get(@AuthenticationPrincipal Claims claims,@PathVariable UUID id){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireView(t,u,id);return ResponseEntity.ok(toResponse(documentService.getDocument(t,u,id)));}
+    @PutMapping(value="/{id}",consumes="multipart/form-data")
+    public ResponseEntity<DocumentResponse> update(@AuthenticationPrincipal Claims claims,@PathVariable UUID id,@RequestPart(value="title",required=false) String title,
+            @RequestPart(value="description",required=false) String description,@RequestPart(value="changeNotes",required=false) String changeNotes,@RequestPart(value="file",required=false) MultipartFile file)throws IOException{UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireEdit(t,u,id);return ResponseEntity.ok(toResponse(documentService.updateDocument(t,u,id,new DocumentService.UpdateDocumentRequest(title,description,null,changeNotes),file)));}
+    @PatchMapping(value="/{id}",consumes="application/json")
+    public ResponseEntity<DocumentResponse> patch(@AuthenticationPrincipal Claims claims,@PathVariable UUID id,@RequestBody DocumentService.UpdateDocumentRequest req)throws IOException{UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireEdit(t,u,id);return ResponseEntity.ok(toResponse(documentService.updateDocument(t,u,id,req,null)));}
     @DeleteMapping("/{id}")
-    public ResponseEntity<Void> delete(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-        documentService.deleteDocument(tenantId, id);
-        return ResponseEntity.noContent().build();
-    }
-
-    // ── Versions ──────────────────────────────────────────────────────────
-
+    public ResponseEntity<Void> delete(@AuthenticationPrincipal Claims claims,@PathVariable UUID id){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireEdit(t,u,id);documentService.deleteDocument(t,id);return ResponseEntity.noContent().build();}
     @GetMapping("/{id}/versions")
-    public ResponseEntity<List<VersionResponse>> versions(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-        return ResponseEntity.ok(
-                documentService.listVersions(tenantId, id)
-                        .stream().map(v -> new VersionResponse(
-                                v.getId(), v.getDocumentId(), v.getVersionNum(),
-                                v.getAssetId(), v.getChangeNotes(), v.getCreatedAt()))
-                        .toList());
-    }
-
-    // ── Comments ──────────────────────────────────────────────────────────
-
+    public ResponseEntity<List<VersionResponse>> versions(@AuthenticationPrincipal Claims claims,@PathVariable UUID id){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireView(t,u,id);return ResponseEntity.ok(documentService.listVersions(t,id).stream().map(v->new VersionResponse(v.getId(),v.getDocumentId(),v.getVersionNum(),v.getRevisionCode(),v.getIssueStatus(),v.getIssuePurpose(),v.getAssetId(),v.getChangeNotes(),v.getIssuedAt(),v.getCreatedAt())).toList());}
     @GetMapping("/{id}/comments")
-    public ResponseEntity<List<CommentResponse>> comments(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-        return ResponseEntity.ok(
-                documentService.listComments(tenantId, id)
-                        .stream().map(c -> new CommentResponse(
-                                c.getId(), c.getDocumentId(),
-                                c.getAuthor() != null ? c.getAuthor().getFullName() : "Unknown",
-                                c.getBody(), c.getCreatedAt()))
-                        .toList());
-    }
-
+    public ResponseEntity<List<CommentResponse>> comments(@AuthenticationPrincipal Claims claims,@PathVariable UUID id){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireView(t,u,id);return ResponseEntity.ok(documentService.listComments(t,id).stream().map(c->new CommentResponse(c.getId(),c.getDocumentId(),c.getAuthor()!=null?c.getAuthor().getFullName():"Unknown",c.getBody(),c.getCreatedAt())).toList());}
     @PostMapping("/{id}/comments")
-    public ResponseEntity<CommentResponse> addComment(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id,
-            @RequestBody CommentRequest req) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-        var comment = documentService.addComment(tenantId, userId, id, req.body());
-        return ResponseEntity.ok(new CommentResponse(
-                comment.getId(), comment.getDocumentId(),
-                comment.getAuthor() != null ? comment.getAuthor().getFullName() : "Unknown",
-                comment.getBody(), comment.getCreatedAt()));
-    }
-
-    // ── Approval ──────────────────────────────────────────────────────────
-
+    public ResponseEntity<CommentResponse> addComment(@AuthenticationPrincipal Claims claims,@PathVariable UUID id,@RequestBody CommentRequest req){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireView(t,u,id);var c=documentService.addComment(t,u,id,req.body());return ResponseEntity.ok(new CommentResponse(c.getId(),c.getDocumentId(),c.getAuthor()!=null?c.getAuthor().getFullName():"Unknown",c.getBody(),c.getCreatedAt()));}
     @PostMapping("/{id}/submit")
-    public ResponseEntity<ApprovalResponse> submit(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-        var approval = documentService.submitForApproval(tenantId, userId, id);
-        return ResponseEntity.ok(toApprovalResponse(approval));
-    }
-
+    public ResponseEntity<ApprovalResponse> submit(@AuthenticationPrincipal Claims claims,@PathVariable UUID id){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireEdit(t,u,id);return ResponseEntity.ok(toApprovalResponse(documentService.submitForApproval(t,u,id)));}
     @GetMapping("/{id}/approvals")
-    public ResponseEntity<List<ApprovalResponse>> approvals(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID id) {
-
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        requireDocumentAccess(tenantId, userId, id);
-        return ResponseEntity.ok(
-                documentService.listApprovals(tenantId, id)
-                        .stream().map(this::toApprovalResponse).toList());
-    }
-
+    public ResponseEntity<List<ApprovalResponse>> approvals(@AuthenticationPrincipal Claims claims,@PathVariable UUID id){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireView(t,u,id);return ResponseEntity.ok(documentService.listApprovals(t,id).stream().map(this::toApprovalResponse).toList());}
     @PostMapping("/approvals/{approvalId}/decide")
-    public ResponseEntity<Void> decide(
-            @AuthenticationPrincipal Claims claims,
-            @PathVariable UUID approvalId,
-            @RequestBody DecisionRequest req) {
+    public ResponseEntity<Void> decide(@AuthenticationPrincipal Claims claims,@PathVariable UUID approvalId,@RequestBody DecisionRequest req){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);approvalDecisionCoordinator.decide(t,u,approvalId,req.decision(),req.comments(),req.reviewOutcome());return ResponseEntity.ok().build();}
 
-        UUID tenantId = tenantId(claims);
-        UUID userId = userId(claims);
-        assertDocumentAccess(tenantId);
-        // decideStep performs the stronger approval-specific checks: active tenant membership,
-        // assigned-reviewer identity and the pessimistic lock around the state transition.
-        documentService.decideStep(tenantId, userId, approvalId, req.decision(), req.comments(),
-                req.reviewOutcome());
-        return ResponseEntity.ok().build();
-    }
-
-    // ── Access helpers ─────────────────────────────────────────────────────
-
-    private void assertDocumentAccess(UUID tenantId) {
-        featureAccessService.assertAccess(tenantId, FeatureCode.DOCUMENT_CONTROL);
-    }
-
-    private void requireDocumentAccess(UUID tenantId, UUID userId, UUID documentId) {
-        projectAccessService.requireActiveUser(tenantId, userId);
-        // The caller-aware service read enforces project participation for project documents.
-        documentService.getDocument(tenantId, userId, documentId);
-    }
-
-    private static UUID tenantId(Claims claims) {
-        return UUID.fromString((String) claims.get("tenantId"));
-    }
-
-    private static UUID userId(Claims claims) {
-        return UUID.fromString(claims.getSubject());
-    }
-
-    // ── Mappers ───────────────────────────────────────────────────────────
-
-    private DocumentResponse toResponse(DocumentEntity d) {
-        return new DocumentResponse(
-                d.getId(), d.getTitle(), d.getDocType(), d.getDescription(),
-                d.getTags(), d.getCurrentVersion(), d.getStatus().name(),
-                d.getWorkflowId(), d.getProjectId(), d.getOriginatorOrgId(), d.getDocumentCode(),
-                d.getDueAt(), d.getReviewOutcome(),
-                d.getCreatedAt(), d.getUpdatedAt());
-    }
-
-    private ApprovalResponse toApprovalResponse(DocumentApprovalEntity a) {
-        return new ApprovalResponse(a.getId(), a.getDocumentId(), a.getStatus(),
-                a.getCurrentStep(), a.getStartedAt(), a.getCompletedAt());
-    }
-
-    // ── DTO records ───────────────────────────────────────────────────────
-
-    public record DocumentResponse(UUID id, String title, String docType, String description,
-                                    String[] tags, int currentVersion, String status,
-                                    UUID workflowId, UUID projectId, UUID originatorOrgId,
-                                    String documentCode, LocalDateTime dueAt,
-                                    ReviewOutcome reviewOutcome,
-                                    LocalDateTime createdAt, LocalDateTime updatedAt) {}
-
-    public record VersionResponse(UUID id, UUID documentId, int versionNum,
-                                   UUID assetId, String changeNotes, LocalDateTime createdAt) {}
-
-    public record CommentResponse(UUID id, UUID documentId, String authorName,
-                                   String body, LocalDateTime createdAt) {}
-
-    public record ApprovalResponse(UUID id, UUID documentId, String status,
-                                    int currentStep, LocalDateTime startedAt, LocalDateTime completedAt) {}
-
-    public record CommentRequest(String body) {}
-
-    /**
-     * {@code reviewOutcome} carries the contractual return code (CODE_A..CODE_D). When present it
-     * decides the outcome; {@code decision} remains accepted for callers that do not use codes.
-     */
-    public record DecisionRequest(String decision, String comments, ReviewOutcome reviewOutcome) {}
+    private void assertDocumentAccess(UUID t){featureAccessService.assertAccess(t,FeatureCode.DOCUMENT_CONTROL);}
+    private static UUID tenantId(Claims c){return UUID.fromString((String)c.get("tenantId"));}
+    private static UUID userId(Claims c){return UUID.fromString(c.getSubject());}
+    private DocumentResponse toResponse(DocumentEntity d){return new DocumentResponse(d.getId(),d.getTitle(),d.getDocType(),d.getDescription(),d.getTags(),d.getCurrentVersion(),d.getCurrentRevisionCode(),d.getStatus().name(),d.getWorkflowId(),d.getProjectId(),d.getOriginatorOrgId(),d.getDocumentCode(),d.getSecurityClassification(),d.getDiscipline(),d.getPackageCode(),d.getLocationCode(),d.getIssuePurpose(),d.getDueAt(),d.getIssuedAt(),d.getReviewOutcome(),d.getIntakeChannel().name(),d.getUploaderName(),d.getUploaderEmail(),d.getCreatedAt(),d.getUpdatedAt());}
+    private ApprovalResponse toApprovalResponse(DocumentApprovalEntity a){return new ApprovalResponse(a.getId(),a.getDocumentId(),a.getStatus(),a.getCurrentStep(),a.getStartedAt(),a.getCompletedAt());}
+    /** A page of register rows plus whether another page exists. */
+    public record DocumentPageResponse(List<DocumentResponse> documents,int page,int size,boolean hasMore){}
+    public record DocumentResponse(UUID id,String title,String docType,String description,String[] tags,int currentVersion,String currentRevisionCode,String status,UUID workflowId,UUID projectId,UUID originatorOrgId,String documentCode,String securityClassification,String discipline,String packageCode,String locationCode,String issuePurpose,LocalDateTime dueAt,LocalDateTime issuedAt,ReviewOutcome reviewOutcome,String intakeChannel,String uploaderName,String uploaderEmail,LocalDateTime createdAt,LocalDateTime updatedAt){}
+    public record VersionResponse(UUID id,UUID documentId,int versionNum,String revisionCode,String issueStatus,String issuePurpose,UUID assetId,String changeNotes,LocalDateTime issuedAt,LocalDateTime createdAt){}
+    public record CommentResponse(UUID id,UUID documentId,String authorName,String body,LocalDateTime createdAt){}
+    public record ApprovalResponse(UUID id,UUID documentId,String status,int currentStep,LocalDateTime startedAt,LocalDateTime completedAt){}
+    public record CommentRequest(String body){}
+    public record DecisionRequest(String decision,String comments,ReviewOutcome reviewOutcome){}
 }

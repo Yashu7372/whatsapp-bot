@@ -34,19 +34,13 @@ public class SecurityConfig {
                 .cors(cors -> cors.configurationSource(corsSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        // When a controller throws, the servlet container re-dispatches to /error.
-                        // That internal dispatch carries no Authentication, so with only
-                        // anyRequest().authenticated() it was itself rejected — and the client saw
-                        // 403 no matter what the controller actually threw. Every 400, 404, 409 and
-                        // 500 in the API was arriving as an indistinguishable "forbidden".
                         .dispatcherTypeMatchers(DispatcherType.ERROR).permitAll()
-                        // WhatsApp webhook endpoints — never behind auth
                         .requestMatchers("/webhook", "/webhook/**").permitAll()
-                        // Auth endpoints
                         .requestMatchers("/api/v1/auth/**").permitAll()
-                        // Actuator health
+                        // Keep anonymous access explicit. New /api/v1/public endpoints do not become
+                        // public accidentally just because of their path prefix.
+                        .requestMatchers("/api/v1/public/upload-links/**").permitAll()
                         .requestMatchers("/actuator/health").permitAll()
-                        // Everything else requires a valid JWT
                         .anyRequest().authenticated()
                 )
                 .addFilterBefore(jwtAuthFilter, UsernamePasswordAuthenticationFilter.class)
