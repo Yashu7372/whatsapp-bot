@@ -30,6 +30,16 @@ public class ProjectCapabilityAdminController {
                                       @RequestParam String partyRole,@RequestParam String userRole,@RequestParam String permissionCode){
         service.reset(tenantId(claims),userId(claims),projectId,partyRole,userRole,permissionCode);return ResponseEntity.noContent().build();
     }
+    /**
+     * The permissions the matrix must render as fixed. Sending them rather than duplicating the
+     * list in the frontend keeps the interface and the server policy from drifting apart.
+     */
+    @GetMapping("/non-overridable")
+    public ResponseEntity<List<String>> nonOverridable(@AuthenticationPrincipal Claims claims,@PathVariable UUID projectId){
+        service.list(tenantId(claims),userId(claims),projectId); // admin gate
+        return ResponseEntity.ok(ProjectCapabilityAdminService.nonOverridable());
+    }
+
     @GetMapping("/audit")
     public ResponseEntity<List<PermissionAuditService.AuditView>> audit(@AuthenticationPrincipal Claims claims,@PathVariable UUID projectId){
         service.list(tenantId(claims),userId(claims),projectId); // admin gate
