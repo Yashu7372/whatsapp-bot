@@ -25,8 +25,6 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.stereotype.Service;
 
-import java.io.ByteArrayInputStream;
-
 @Slf4j
 @Service
 @RequiredArgsConstructor
@@ -53,7 +51,6 @@ public class WebhookApplicationService {
     public void handleIncomingWebhook(JsonNode payload) {
         webhookParser.parseFirstMessage(payload).ifPresent(this::handleMessage);
     }
-
 
     private void handleMessage(WhatsAppInboundMessage inbound) {
         TenantEntity tenant = tenantService.resolveActiveTenant(inbound.phoneNumberId());
@@ -92,9 +89,6 @@ public class WebhookApplicationService {
         if (handledNativePayload) {
             log.info("Native WhatsApp payload handled. tenant={}, conversation={}, type={}",
                     tenant.getTenantCode(), conversation.getId(), inbound.messageType());
-
-            // For cart/order/list/button/flow replies, we stop normal AI flow here.
-            // Later you can route based on button id, list id, flow response, or order payload.
             return;
         }
 
@@ -116,7 +110,6 @@ public class WebhookApplicationService {
             return;
         }
 
-        // Emit lead signal for every inbound text message
         try {
             leadSignalService.extractFromInbound(
                     tenant,
@@ -146,12 +139,6 @@ public class WebhookApplicationService {
         conversationService.saveAiOutbound(tenant, conversation, aiResponse);
     }
 
-    /**
-     * A customer sent a document over WhatsApp. If the tenant has document control at all, it is
-     * downloaded, scanned and filed into the register exactly like any other external intake
-     * channel — landing with no project assigned, for a human to triage. Tenants without the
-     * feature keep today's behaviour: a generic non-text reply, nothing ingested.
-     */
     private void handleInboundDocument(TenantEntity tenant, ConversationService.ConversationContext context,
                                        ConversationEntity conversation, WhatsAppInboundMessage inbound) {
         if (!featureAccessService.isFeatureEnabled(tenant.getId(), FeatureCode.DOCUMENT_CONTROL)) {
@@ -183,8 +170,7 @@ public class WebhookApplicationService {
     private String ingestInboundDocument(TenantEntity tenant, ConversationService.ConversationContext context,
                                          ConversationEntity conversation, String mediaId, String filename,
                                          String caption, JsonNode documentNode) {
-        try {
-            WhatsAppGraphClient.MediaDownload media = whatsAppGraphClient.downloadMedia(tenant, mediaId);
+        try (WhatsAppGraphClient.MediaDownload media = whatsAppGraphClient.downloadMedia(tenant, mediaId)) {
             String contentType = media.contentType() != null
                     ? media.contentType() : documentNode.path("mime_type").asText("application/octet-stream");
 
@@ -192,8 +178,7 @@ public class WebhookApplicationService {
                     tenant.getId(), IntakeChannel.WHATSAPP, documentIntakeProperties.getWhatsappDocType(), null,
                     filename, caption, context.contactEntity().getDisplayName(), null, null);
 
-            DocumentEntity doc = documentIntakeService.ingest(request, filename, contentType,
-                    new ByteArrayInputStream(media.bytes()));
+            DocumentEntity doc = documentIntakeService.ingest(request, filename, contentType, media.stream());
             log.info("WhatsApp document ingested. tenant={} conversation={} documentId={}",
                     tenant.getTenantCode(), conversation.getId(), doc.getId());
             return DOCUMENT_RECEIVED_REPLY;
