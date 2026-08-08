@@ -4,6 +4,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
+import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Repository
@@ -69,6 +70,31 @@ class DocumentAuthorizationRepository {
                    and s.decision is null and lower(s.reviewer_email)=lower(?)
                 """, Integer.class, tenantId, documentId, reviewerEmail);
         return count != null && count > 0;
+    }
+
+    void updateSecurity(UUID tenantId,UUID documentId,String classification,String discipline,String packageCode,String locationCode){
+        jdbc.update("""
+            update documents set security_classification=?,discipline=?,package_code=?,location_code=?,updated_at=now()
+             where tenant_id=? and id=?
+            """,classification,discipline,packageCode,locationCode,tenantId,documentId);
+    }
+
+    void insertGrant(UUID tenantId,UUID documentId,UUID userId,UUID organizationId,String roleCode,
+                     String permission,UUID grantedBy,LocalDateTime expiresAt){
+        jdbc.update("""
+            insert into document_access_grants(tenant_id,document_id,user_id,organization_id,role_code,permission_code,granted_by,expires_at)
+            values(?,?,?,?,?,?,?,?)
+            """,tenantId,documentId,userId,organizationId,roleCode,permission,grantedBy,expiresAt);
+    }
+
+    boolean tenantUser(UUID tenantId,UUID userId){
+        Integer n=jdbc.queryForObject("select count(*) from tenant_users where tenant_id=? and id=? and active=true",Integer.class,tenantId,userId);
+        return n!=null&&n>0;
+    }
+
+    boolean activeProjectOrganization(UUID tenantId,UUID projectId,UUID organizationId){
+        Integer n=jdbc.queryForObject("select count(*) from project_participants where tenant_id=? and project_id=? and organization_id=? and active=true",Integer.class,tenantId,projectId,organizationId);
+        return n!=null&&n>0;
     }
 
     record DocumentSecurity(UUID projectId, UUID originatorOrganizationId, String classification) {}
