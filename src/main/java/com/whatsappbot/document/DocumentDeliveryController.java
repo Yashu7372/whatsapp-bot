@@ -1,5 +1,7 @@
 package com.whatsappbot.document;
 
+import com.whatsappbot.features.FeatureAccessService;
+import com.whatsappbot.features.FeatureCode;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +17,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1")
 public class DocumentDeliveryController {
     private final DocumentDeliveryService service;
+    private final FeatureAccessService featureAccessService;
 
     @PostMapping("/documents/{documentId}/issue")
     public ResponseEntity<DocumentDeliveryService.IssuedRevision> issueRevision(
@@ -58,6 +61,12 @@ public class DocumentDeliveryController {
 
     public record IssueRequest(String purpose){}
     public record AddItemRequest(UUID documentId,UUID versionId){}
-    private static UUID tenantId(Claims claims){return UUID.fromString((String)claims.get("tenantId"));}
+    /** Resolves the tenant and asserts the document-control entitlement in one step, so no
+     *  endpoint on this controller can be reached by a tenant without the feature. */
+    private UUID tenantId(Claims claims){
+        UUID tenantId=UUID.fromString((String)claims.get("tenantId"));
+        featureAccessService.assertAccess(tenantId,FeatureCode.DOCUMENT_CONTROL);
+        return tenantId;
+    }
     private static UUID userId(Claims claims){return UUID.fromString(claims.getSubject());}
 }

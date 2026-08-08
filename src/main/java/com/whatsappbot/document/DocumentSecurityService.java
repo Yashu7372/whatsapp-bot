@@ -11,6 +11,7 @@ import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
@@ -18,8 +19,8 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class DocumentSecurityService {
-    private static final Set<String> CLASSIFICATIONS=Set.of("PROJECT","ORGANIZATION","RESTRICTED");
-    private static final Set<String> PERMISSIONS=Set.of("VIEW","EDIT","ISSUE");
+    private static final Set<String> CLASSIFICATIONS=java.util.Arrays.stream(DocumentClassification.values()).map(Enum::name).collect(java.util.stream.Collectors.toUnmodifiableSet());
+    private static final Set<String> PERMISSIONS=Set.of(DocumentAuthorizationService.VIEW,DocumentAuthorizationService.EDIT,DocumentAuthorizationService.ISSUE,DocumentAuthorizationService.MANAGE);
 
     private final DocumentAuthorizationRepository repository;
     private final DocumentAuthorizationService authorization;
@@ -29,16 +30,17 @@ public class DocumentSecurityService {
 
     @Transactional
     public void updateSecurity(UUID tenantId,UUID userId,UUID documentId,UpdateSecurityRequest req){
-        authorization.requireEdit(tenantId,userId,documentId);
+        authorization.requireSecurityAdministration(tenantId,userId,documentId);
         var before=repository.security(tenantId,documentId);
         String classification=normalize(req.classification(),CLASSIFICATIONS,"classification");
         repository.updateSecurity(tenantId,documentId,classification,req.discipline(),req.packageCode(),req.locationCode());
         TenantUserEntity actor=projectAccess.requireActiveUser(tenantId,userId);
-        if("RESTRICTED".equals(classification)){
-            for(String permission:PERMISSIONS){
-                if(!repository.hasGrant(tenantId,documentId,userId,actor.getOrganizationId(),actor.getRole().name(),permission))
-                    repository.insertGrant(tenantId,documentId,userId,null,null,permission,userId,null);
-            }
+        // Restricting a document must not lock its own administrator out of it. A single MANAGE
+        // grant is enough now that MANAGE implies VIEW, EDIT and ISSUE.
+        if(DocumentClassification.RESTRICTED.name().equals(classification)
+                && !repository.hasGrant(tenantId,documentId,userId,actor.getOrganizationId(),actor.getRole().name(),
+                        List.of(DocumentAuthorizationService.MANAGE))){
+            repository.insertGrant(tenantId,documentId,userId,null,null,DocumentAuthorizationService.MANAGE,userId,null);
         }
         audit.record(tenantId,documentId,userId,DocumentAuditService.SHARE_GRANTED,
                 Map.of("action","SECURITY_CLASSIFICATION_CHANGED","classification",classification));
@@ -51,7 +53,7 @@ public class DocumentSecurityService {
 
     @Transactional
     public void grant(UUID tenantId,UUID userId,UUID documentId,GrantRequest req){
-        authorization.requireEdit(tenantId,userId,documentId);
+        authorization.requireSecurityAdministration(tenantId,userId,documentId);
         String permission=normalize(req.permission(),PERMISSIONS,"permission");
         int principals=(req.userId()!=null?1:0)+(req.organizationId()!=null?1:0)+(req.roleCode()!=null&&!req.roleCode().isBlank()?1:0);
         if(principals!=1)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Exactly one grant principal is required: userId, organizationId or roleCode");
@@ -59,12 +61,12 @@ public class DocumentSecurityService {
         if(req.userId()!=null&&!repository.tenantUser(tenantId,req.userId()))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Grant user is not an active member of this tenant");
         if(req.organizationId()!=null){
             if(doc.projectId()==null||!repository.activeProjectOrganization(tenantId,doc.projectId(),req.organizationId()))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Grant organization is not an active participant on this project");
-            if(!"VIEW".equals(permission))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Organization grants are VIEW-only; EDIT/ISSUE must be assigned to a named user");
+            if(!DocumentAuthorizationService.VIEW.equals(permission))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Organization grants are VIEW-only; EDIT/ISSUE/MANAGE must be assigned to a named user");
         }
         String role=req.roleCode()==null?null:req.roleCode().trim().toUpperCase();
         if(role!=null){
             try{UserRole.valueOf(role);}catch(IllegalArgumentException ex){throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Unsupported roleCode: "+role);}
-            if(!"VIEW".equals(permission))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Role grants are VIEW-only; EDIT/ISSUE must be assigned to a named user");
+            if(!DocumentAuthorizationService.VIEW.equals(permission))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Role grants are VIEW-only; EDIT/ISSUE/MANAGE must be assigned to a named user");
         }
         repository.insertGrant(tenantId,documentId,req.userId(),req.organizationId(),role,permission,userId,req.expiresAt());
         String principal=req.userId()!=null?req.userId().toString():req.organizationId()!=null?req.organizationId().toString():role;

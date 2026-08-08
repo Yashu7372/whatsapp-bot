@@ -8,6 +8,8 @@ import java.util.UUID;
 
 public interface OrganizationRepository extends JpaRepository<OrganizationEntity, UUID> {
 
+    boolean existsByIdAndTenantIdAndActiveTrue(UUID id, UUID tenantId);
+
     List<OrganizationEntity> findAllByTenantIdOrderByNameAsc(UUID tenantId);
 
     List<OrganizationEntity> findAllByTenantIdAndActiveTrueOrderByNameAsc(UUID tenantId);

@@ -1,5 +1,7 @@
 package com.whatsappbot.document;
 
+import com.whatsappbot.features.FeatureAccessService;
+import com.whatsappbot.features.FeatureCode;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +15,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/transmittals")
 public class TransmittalDetailController {
     private final TransmittalDetailService service;
+    private final FeatureAccessService featureAccessService;
 
     @GetMapping("/{transmittalId}")
     public ResponseEntity<TransmittalDetailService.Detail> get(@AuthenticationPrincipal Claims claims,@PathVariable UUID transmittalId){

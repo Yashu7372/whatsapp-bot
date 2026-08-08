@@ -7,4 +7,6 @@ import java.util.UUID;
 
 public interface TenantUserRepository extends JpaRepository<TenantUserEntity, UUID> {
     Optional<TenantUserEntity> findByEmailAndActiveTrue(String email);
+
+    boolean existsByTenantIdAndEmailIgnoreCaseAndActiveTrue(UUID tenantId, String email);
 }

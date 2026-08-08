@@ -16,6 +16,11 @@ import java.util.UUID;
 @Service
 @RequiredArgsConstructor
 public class DocumentDeliveryService {
+    /** Terminal or negative states from which no issue is meaningful. */
+    private static final Set<String> BLOCKED_ISSUE_STATUSES=
+            Set.of(DocumentStatus.REJECTED.name(),DocumentStatus.ARCHIVED.name());
+    /** Purposes that commit the business contractually and therefore require prior approval. */
+    private static final Set<String> APPROVAL_REQUIRED_PURPOSES=Set.of("FOR_CONSTRUCTION","AS_BUILT");
     private static final Set<String> PURPOSES=Set.of("FOR_REVIEW","FOR_APPROVAL","FOR_INFORMATION","FOR_CONSTRUCTION","AS_BUILT");
 
     private final DocumentDeliveryRepository repository;
@@ -30,6 +35,7 @@ public class DocumentDeliveryService {
         DocumentDeliveryRepository.RevisionRef revision=repository.currentRevision(tenantId,documentId);
         if(revision==null) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Current document revision not found");
         if("ISSUED".equals(revision.issueStatus())) throw new ResponseStatusException(HttpStatus.CONFLICT,"Current revision is already issued");
+        requireIssuableStatus(repository.documentStatus(tenantId,documentId),normalized,documentId);
         repository.issueCurrentRevision(tenantId,documentId,revision.versionId(),userId,normalized);
         return new IssuedRevision(documentId,revision.versionId(),revision.revisionCode(),normalized);
     }
@@ -72,8 +78,8 @@ public class DocumentDeliveryService {
     @Transactional
     public void issueTransmittal(UUID tenantId,UUID userId,UUID transmittalId){
         requireEditableTransmittal(tenantId,userId,transmittalId,ProjectPermission.TRANSMITTAL_ISSUE);
-        if(repository.itemCount(transmittalId)==0)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Cannot issue an empty transmittal");
-        if(repository.recipientCount(transmittalId)==0)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Cannot issue a transmittal without recipients");
+        if(repository.itemCount(tenantId,transmittalId)==0)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Cannot issue an empty transmittal");
+        if(repository.recipientCount(tenantId,transmittalId)==0)throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Cannot issue a transmittal without recipients");
         repository.issueTransmittal(tenantId,transmittalId,userId);
     }
 
@@ -100,6 +106,24 @@ public class DocumentDeliveryService {
         ProjectAuthorizationService.Decision d=projectAuthorization.require(tenantId,userId,tx.projectId(),permission);
         if(!accessService.isTenantAdministrator(d.actor())&&!tx.senderOrganizationId().equals(d.organizationId()))throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Only the sender organization can change this transmittal");
         return tx;
+    }
+
+    /**
+     * A revision may only leave the office in a state the document has actually reached.
+     *
+     * <p>Issuing previously forced the document to PUBLISHED from any state at all, so a rejected
+     * drawing could be issued FOR_CONSTRUCTION. Informational issues stay permissive because
+     * circulating a draft for comment is normal practice; the purposes that carry contractual
+     * weight require the document to have been approved.
+     */
+    private void requireIssuableStatus(String status,String purpose,UUID documentId){
+        if(status==null) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Document not found: "+documentId);
+        if(BLOCKED_ISSUE_STATUSES.contains(status))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,"A "+status+" document cannot be issued: "+documentId);
+        if(APPROVAL_REQUIRED_PURPOSES.contains(purpose)&&!DocumentStatus.APPROVED.name().equals(status)
+                &&!DocumentStatus.PUBLISHED.name().equals(status))
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Issuing "+purpose+" requires an approved document; this one is "+status);
     }
 
     private static String normalizePurpose(String purpose){String p=purpose==null?"FOR_INFORMATION":purpose.trim().toUpperCase();if(!PURPOSES.contains(p))throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Unsupported issue purpose: "+p);return p;}

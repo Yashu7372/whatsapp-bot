@@ -1,5 +1,7 @@
 package com.whatsappbot.document;
 
+import com.whatsappbot.features.FeatureAccessService;
+import com.whatsappbot.features.FeatureCode;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -13,6 +15,7 @@ import java.util.UUID;
 @RequestMapping("/api/v1/documents/{documentId}")
 public class DocumentSecurityController {
     private final DocumentSecurityService service;
+    private final FeatureAccessService featureAccessService;
 
     @PatchMapping("/security")
     public ResponseEntity<Void> updateSecurity(@AuthenticationPrincipal Claims claims,@PathVariable UUID documentId,
@@ -28,6 +31,12 @@ public class DocumentSecurityController {
         return ResponseEntity.noContent().build();
     }
 
-    private static UUID tenantId(Claims claims){return UUID.fromString((String)claims.get("tenantId"));}
+    /** Resolves the tenant and asserts the document-control entitlement in one step, so no
+     *  endpoint on this controller can be reached by a tenant without the feature. */
+    private UUID tenantId(Claims claims){
+        UUID tenantId=UUID.fromString((String)claims.get("tenantId"));
+        featureAccessService.assertAccess(tenantId,FeatureCode.DOCUMENT_CONTROL);
+        return tenantId;
+    }
     private static UUID userId(Claims claims){return UUID.fromString(claims.getSubject());}
 }

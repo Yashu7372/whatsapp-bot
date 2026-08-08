@@ -29,12 +29,18 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import com.whatsappbot.project.PartyRole;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DocumentService {
+
+    /** Upper bound on a register page, so a caller cannot ask for the whole tenant in one request. */
+    private static final int MAX_PAGE_SIZE = 200;
 
     /** Decision values accepted from a reviewer, and the terminal approval statuses they map to. */
     private static final String DECISION_APPROVED = "APPROVED";
@@ -60,6 +66,8 @@ public class DocumentService {
     private final DocumentNumberService numberService;
     private final OrganizationRepository organizationRepository;
     private final ObjectMapper objectMapper;
+    private final DocumentAuthorizationRepository authorizationRepository;
+    private final com.whatsappbot.project.ProjectParticipantRepository participantRepository;
 
     // ── Document CRUD ──────────────────────────────────────────────────────
 
@@ -92,6 +100,7 @@ public class DocumentService {
         version.setDocumentId(doc.getId());
         version.setTenant(tenant);
         version.setVersionNum(1);
+        version.setRevisionCode(revisionCodeFor(1));
         version.setCreatedBy(user);
 
         if (file != null && !file.isEmpty()) {
@@ -121,20 +130,37 @@ public class DocumentService {
      * project remain tenant-wide, which is how non-project document flows already worked.
      */
     @Transactional(readOnly = true)
-    public List<DocumentEntity> listDocuments(UUID tenantId, UUID userId, String docType) {
+    public DocumentPage listDocuments(UUID tenantId, UUID userId, String docType, int page, int size) {
         TenantUserEntity user = accessService.requireActiveUser(tenantId, userId);
+        String type = docType != null && !docType.isBlank() ? docType : null;
+        int pageSize = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
+        int offset = Math.max(0, page) * pageSize;
 
-        List<DocumentEntity> documents = docType != null && !docType.isBlank()
-                ? documentRepository.findAllByTenantIdAndDocTypeOrderByUpdatedAtDesc(tenantId, docType)
-                : documentRepository.findAllByTenantIdOrderByUpdatedAtDesc(tenantId);
+        // One extra row answers "is there another page" without a second count query that would
+        // have to repeat — and could drift from — the visibility predicate.
+        List<UUID> ids = authorizationRepository.visibleDocumentIds(tenantId,
+                accessService.isTenantAdministrator(user), user.getId(), user.getOrganizationId(),
+                user.getRole().name(), user.getEmail(), type, pageSize + 1, offset);
 
-        if (accessService.isTenantAdministrator(user)) {
-            return documents;
+        boolean hasMore = ids.size() > pageSize;
+        List<UUID> pageIds = hasMore ? ids.subList(0, pageSize) : ids;
+        if (pageIds.isEmpty()) {
+            return new DocumentPage(List.of(), Math.max(0, page), pageSize, false);
         }
-        return documents.stream()
-                .filter(d -> d.getProjectId() == null
-                        || accessService.canSeeProject(tenantId, d.getProjectId(), user))
-                .toList();
+
+        // The id order from the visibility query is authoritative; findAllById does not preserve it.
+        Map<UUID, DocumentEntity> byId = documentRepository.findAllById(pageIds).stream()
+                .collect(Collectors.toMap(DocumentEntity::getId, d -> d));
+        List<DocumentEntity> documents = pageIds.stream().map(byId::get).filter(Objects::nonNull).toList();
+        return new DocumentPage(documents, Math.max(0, page), pageSize, hasMore);
+    }
+
+    /** A page of documents the caller is authorized to read. */
+    public record DocumentPage(List<DocumentEntity> documents, int page, int size, boolean hasMore) {}
+
+    /** Revision code derived from the version number, zero padded so codes sort lexically. */
+    private static String revisionCodeFor(int versionNum) {
+        return String.format("%02d", versionNum);
     }
 
     /** Read of a single document with the same project-participation check applied. */
@@ -175,6 +201,11 @@ public class DocumentService {
 
             int nextVersion = doc.getCurrentVersion() + 1;
             doc.setCurrentVersion(nextVersion);
+            // The register shows the revision code, so it has to advance with the version. It was
+            // previously written only when a revision was issued, leaving a document on version 5
+            // still displaying "Rev 01".
+            String nextRevisionCode = revisionCodeFor(nextVersion);
+            doc.setCurrentRevisionCode(nextRevisionCode);
 
             MediaAssetEntity asset = storeFile(tenantId, userId, file, docId);
 
@@ -182,6 +213,7 @@ public class DocumentService {
             version.setDocumentId(docId);
             version.setTenant(tenant);
             version.setVersionNum(nextVersion);
+            version.setRevisionCode(nextRevisionCode);
             version.setAssetId(asset.getId());
             version.setChangeNotes(req.changeNotes());
             version.setCreatedBy(user);
@@ -295,7 +327,7 @@ public class DocumentService {
             DocumentControlWorkflowEntity wf = workflowRepository.findById(doc.getWorkflowId())
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
                             "The workflow attached to this document no longer exists"));
-            seedSteps(savedApproval, wf);
+            seedSteps(tenantId, savedApproval, wf, doc.getProjectId());
         }
 
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -316,7 +348,7 @@ public class DocumentService {
      * steps is completed by a single decision from anyone. A malformed workflow has to stop the
      * submission, not quietly widen who can approve it.
      */
-    private void seedSteps(DocumentApprovalEntity approval, DocumentControlWorkflowEntity wf) {
+    private void seedSteps(UUID tenantId, DocumentApprovalEntity approval, DocumentControlWorkflowEntity wf, UUID projectId) {
         List<Map<String, Object>> steps;
         try {
             steps = objectMapper.readValue(wf.getSteps(), new TypeReference<>() {});
@@ -331,14 +363,154 @@ public class DocumentService {
                     "The approval workflow for this document type defines no steps");
         }
         for (int i = 0; i < steps.size(); i++) {
-            Map<String, Object> stepDef = steps.get(i);
-            DocumentApprovalStepEntity step = new DocumentApprovalStepEntity();
-            step.setApprovalId(approval.getId());
-            step.setStepIndex(i);
-            step.setStepName((String) stepDef.getOrDefault("name", "Step " + (i + 1)));
-            step.setReviewerEmail((String) stepDef.get("reviewerEmail"));
-            stepRepository.save(step);
+            stepRepository.save(buildStep(tenantId, approval, steps.get(i), i, projectId));
         }
+    }
+
+    /**
+     * Materialises one workflow stage as an approval step.
+     *
+     * <p>Everything the workflow defines is carried over. Previously only the index, name and
+     * reviewer email were, so the database defaults silently rewrote every stage into a sequential
+     * TECHNICAL_REVIEW assigned to a named user — which meant a stage defined as CLIENT_APPROVAL
+     * was enforced as a consultant review, and no step ever gained a due date.
+     */
+    private DocumentApprovalStepEntity buildStep(UUID tenantId, DocumentApprovalEntity approval,
+                                                 Map<String, Object> stepDef, int index, UUID projectId) {
+        DocumentApprovalStepEntity step = new DocumentApprovalStepEntity();
+        step.setApprovalId(approval.getId());
+        step.setStepIndex(index);
+        step.setStepName(text(stepDef.get("name"), "Step " + (index + 1)));
+
+        ApprovalAuthority authority = ApprovalAuthority.of(upper(stepDef.get("authority"),
+                ApprovalAuthority.TECHNICAL_REVIEW.name()));
+        step.setAuthorityType(authority.name());
+
+        String reviewerEmail = text(stepDef.get("reviewerEmail"), null);
+        ApprovalAssignmentType assignment = ApprovalAssignmentType.of(upper(stepDef.get("assignmentType"),
+                reviewerEmail != null ? ApprovalAssignmentType.USER.name() : ApprovalAssignmentType.PARTY_ROLE.name()));
+        step.setAssignmentType(assignment.name());
+        step.setReviewerEmail(reviewerEmail);
+
+        switch (assignment) {
+            case USER -> requireStepTarget(reviewerEmail != null, index,
+                    "a reviewerEmail");
+            case ORGANIZATION -> {
+                UUID organizationId = uuid(stepDef.get("organizationId"), index);
+                requireParticipant(tenantId, projectId, organizationId, index);
+                step.setAssignmentOrganizationId(organizationId);
+            }
+            case PARTY_ROLE -> {
+                String partyRole = upper(stepDef.get("partyRole"), null);
+                requireStepTarget(partyRole != null, index, "a partyRole");
+                requirePartyRoleOnProject(tenantId, projectId, partyRole, index);
+                step.setAssignmentPartyRole(partyRole);
+            }
+        }
+
+        step.setRequired(!Boolean.FALSE.equals(stepDef.get("required")));
+        step.setParallelGroup(text(stepDef.get("parallelGroup"), null));
+
+        Integer slaHours = integer(stepDef.get("slaHours"));
+        step.setSlaHours(slaHours);
+        // The first stage is actionable immediately, so its clock starts now. Later stages get a
+        // due date when the workflow advances onto them.
+        if (slaHours != null && index == approval.getCurrentStep()) {
+            step.setDueAt(LocalDateTime.now().plusHours(slaHours));
+        }
+        return step;
+    }
+
+    /**
+     * A stage assigned to a company or party role that is not on this project can never be decided
+     * — the decider would fail the project visibility check. Failing at submission makes that
+     * visible now rather than as a workflow that silently stalls.
+     */
+    private void requireParticipant(UUID tenantId, UUID projectId, UUID organizationId, int index) {
+        if (projectId == null) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Step " + (index + 1) + " assigns a company, which requires the document to belong to a project");
+        }
+        if (!participantRepository.existsByTenantIdAndProjectIdAndOrganizationIdAndActiveTrue(
+                tenantId, projectId, organizationId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Step " + (index + 1) + " is assigned to a company that is not an active participant on this project");
+        }
+    }
+
+    private void requirePartyRoleOnProject(UUID tenantId, UUID projectId, String partyRole, int index) {
+        if (projectId == null) {
+            return; // Tenant-level documents have no party roles; the reviewer-email path governs.
+        }
+        PartyRole role;
+        try {
+            role = PartyRole.valueOf(partyRole);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Step " + (index + 1) + " uses an unknown party role: " + partyRole, ex);
+        }
+        boolean present = participantRepository
+                .findAllByTenantIdAndProjectIdAndActiveTrueOrderByPartyRoleAsc(tenantId, projectId)
+                .stream().anyMatch(p -> p.getPartyRole() == role);
+        if (!present) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Step " + (index + 1) + " is assigned to " + partyRole
+                            + ", but no active company holds that role on this project");
+        }
+    }
+
+    /**
+     * Stamps the due date on the stage that just became actionable, and on its parallel peers. The
+     * clock starts when a reviewer can actually act, not when the document was submitted.
+     */
+    private void startSlaClock(List<DocumentApprovalStepEntity> steps, int nextIdx) {
+        DocumentApprovalStepEntity next = steps.stream()
+                .filter(s -> s.getStepIndex() == nextIdx).findFirst().orElse(null);
+        if (next == null) return;
+        String group = next.getParallelGroup();
+        for (DocumentApprovalStepEntity step : steps) {
+            boolean inScope = step.getStepIndex() == nextIdx
+                    || (group != null && group.equals(step.getParallelGroup()));
+            if (inScope && step.getDecision() == null && step.getSlaHours() != null && step.getDueAt() == null) {
+                step.setDueAt(LocalDateTime.now().plusHours(step.getSlaHours()));
+                stepRepository.save(step);
+            }
+        }
+    }
+
+    private static void requireStepTarget(boolean present, int index, String what) {
+        if (!present) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Step " + (index + 1) + " requires " + what);
+        }
+    }
+
+    private static UUID uuid(Object value, int index) {
+        try {
+            return UUID.fromString(String.valueOf(value));
+        } catch (Exception ex) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Step " + (index + 1) + " has an invalid organizationId", ex);
+        }
+    }
+
+    private static Integer integer(Object value) {
+        if (value == null) return null;
+        try {
+            int parsed = Integer.parseInt(String.valueOf(value).trim());
+            return parsed > 0 ? parsed : null;
+        } catch (NumberFormatException ex) {
+            return null;
+        }
+    }
+
+    private static String text(Object value, String fallback) {
+        return value == null || String.valueOf(value).isBlank() ? fallback : String.valueOf(value).trim();
+    }
+
+    private static String upper(Object value, String fallback) {
+        String resolved = text(value, fallback);
+        return resolved == null ? null : resolved.toUpperCase();
     }
 
     @Transactional
@@ -424,7 +596,9 @@ public class DocumentService {
         } else {
             boolean moreSteps = steps.stream().anyMatch(s -> s.getStepIndex() > currentIdx);
             if (moreSteps) {
-                approval.setCurrentStep(currentIdx + 1);
+                int nextIdx = currentIdx + 1;
+                approval.setCurrentStep(nextIdx);
+                startSlaClock(steps, nextIdx);
                 approvalComplete = false;
             } else {
                 approval.setStatus(DECISION_APPROVED);

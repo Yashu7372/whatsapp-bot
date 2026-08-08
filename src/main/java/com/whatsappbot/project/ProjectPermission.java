@@ -9,6 +9,12 @@ public enum ProjectPermission {
     DOCUMENT_EDIT,
     DOCUMENT_ISSUE,
     DOCUMENT_APPROVE,
+    /**
+     * Change a document's security classification or administer its access grants. Deliberately
+     * separate from DOCUMENT_EDIT: editing content must not confer the authority to declassify a
+     * restricted document or to widen who can reach it.
+     */
+    DOCUMENT_SECURITY_ADMIN,
     DOCUMENT_REVIEW_INTERNAL,
     DOCUMENT_REVIEW_TECHNICAL,
     DOCUMENT_APPROVE_CLIENT,

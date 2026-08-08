@@ -1,5 +1,7 @@
 package com.whatsappbot.document;
 
+import com.whatsappbot.features.FeatureAccessService;
+import com.whatsappbot.features.FeatureCode;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -15,6 +17,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class ApprovalWorklistController {
     private final ApprovalWorklistService service;
+    private final FeatureAccessService featureAccessService;
 
     @GetMapping("/mine")
     public ResponseEntity<List<ApprovalWorklistService.Item>> mine(@AuthenticationPrincipal Claims claims){

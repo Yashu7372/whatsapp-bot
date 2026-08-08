@@ -59,6 +59,7 @@ public class ProjectAuthorizationService {
             case PROJECT_VIEW,DOCUMENT_VIEW,TRANSMITTAL_VIEW -> new Decision(actor,DataScope.PROJECT,orgId,roles);
             case DOCUMENT_CREATE,DOCUMENT_EDIT,DOCUMENT_ISSUE,TRANSMITTAL_CREATE,TRANSMITTAL_ISSUE -> manager?new Decision(actor,DataScope.ORGANIZATION,orgId,roles):deny(permission);
             case DOCUMENT_APPROVE -> reviewer&&(client||consultant)?new Decision(actor,DataScope.ASSIGNED,orgId,roles):deny(permission);
+            case DOCUMENT_SECURITY_ADMIN -> manager?new Decision(actor,DataScope.ORGANIZATION,orgId,roles):deny(permission);
             case DOCUMENT_REVIEW_INTERNAL -> reviewer&&contractor?new Decision(actor,DataScope.ASSIGNED,orgId,roles):deny(permission);
             case DOCUMENT_REVIEW_TECHNICAL -> reviewer&&consultant?new Decision(actor,DataScope.ASSIGNED,orgId,roles):deny(permission);
             case DOCUMENT_APPROVE_CLIENT -> reviewer&&client?new Decision(actor,DataScope.ASSIGNED,orgId,roles):deny(permission);

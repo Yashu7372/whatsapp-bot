@@ -21,8 +21,10 @@ public class ApprovalWorklistService {
 
     @Transactional(readOnly=true)
     public List<Item> mine(UUID tenantId,UUID userId){
-        accessService.requireActiveUser(tenantId,userId);
-        return repository.pending(tenantId).stream().filter(r->allowed(tenantId,userId,r.approvalId())).map(this::toItem).toList();
+        var actor=accessService.requireActiveUser(tenantId,userId);
+        // Narrowed by assignment in SQL first; the contractual authority check still decides.
+        return repository.pendingFor(tenantId,userId,actor.getEmail(),actor.getOrganizationId()).stream()
+                .filter(r->allowed(tenantId,userId,r.approvalId())).map(this::toItem).toList();
     }
 
     @Transactional

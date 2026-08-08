@@ -1,6 +1,8 @@
 package com.whatsappbot.document;
 
 import com.whatsappbot.project.ProjectAccessService;
+import com.whatsappbot.features.FeatureAccessService;
+import com.whatsappbot.features.FeatureCode;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.HttpStatus;
@@ -17,6 +19,7 @@ import java.util.UUID;
 @RequiredArgsConstructor
 public class WorkflowNotificationController {
     private final WorkflowNotificationService service;
+    private final FeatureAccessService featureAccessService;
     private final ProjectAccessService access;
 
     @GetMapping

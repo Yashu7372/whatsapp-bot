@@ -7,6 +7,9 @@ import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Component;
 import org.springframework.web.server.ResponseStatusException;
 
+import com.whatsappbot.auth.TenantUserRepository;
+import com.whatsappbot.project.OrganizationRepository;
+
 import java.util.*;
 
 @Component
@@ -16,8 +19,19 @@ public class WorkflowDefinitionValidator {
     private static final Set<String> ASSIGNMENTS=Set.of("USER","ORGANIZATION","PARTY_ROLE");
     private static final Set<String> PARTY_ROLES=Set.of("CLIENT","CONSULTANT","CONTRACTOR","SUBCONTRACTOR");
     private final ObjectMapper mapper;
+    private final OrganizationRepository organizationRepository;
+    private final TenantUserRepository userRepository;
 
-    public void validate(String json){
+    /**
+     * Validates a workflow template.
+     *
+     * <p>Shape was already checked. Assignment targets were not, so a template could name an
+     * organization or a reviewer that does not exist and be accepted — the problem only surfaced
+     * later as an approval nobody could action. Project participation is deliberately not checked
+     * here: a template is tenant-level and reused across projects, so that check belongs at
+     * submission, where the document's project is known.
+     */
+    public void validate(UUID tenantId,String json){
         if(json==null)return;
         List<Map<String,Object>> steps;
         try{steps=mapper.readValue(json,new TypeReference<>(){});}catch(Exception ex){throw bad("Workflow steps must be a valid JSON array");}
@@ -28,8 +42,20 @@ public class WorkflowDefinitionValidator {
             if(authority==null||!AUTHORITIES.contains(authority))throw bad("Step "+(i+1)+" has invalid authority");
             String assignment=upper(s.get("assignmentType"));if(assignment==null)assignment=s.get("reviewerEmail")!=null?"USER":"PARTY_ROLE";
             if(!ASSIGNMENTS.contains(assignment))throw bad("Step "+(i+1)+" has invalid assignmentType");
-            if("USER".equals(assignment)&&blank(s.get("reviewerEmail")))throw bad("Step "+(i+1)+" USER assignment requires reviewerEmail");
-            if("ORGANIZATION".equals(assignment)&&blank(s.get("organizationId")))throw bad("Step "+(i+1)+" ORGANIZATION assignment requires organizationId");
+            if("USER".equals(assignment)){
+                if(blank(s.get("reviewerEmail")))throw bad("Step "+(i+1)+" USER assignment requires reviewerEmail");
+                String email=String.valueOf(s.get("reviewerEmail")).trim();
+                if(!userRepository.existsByTenantIdAndEmailIgnoreCaseAndActiveTrue(tenantId,email))
+                    throw bad("Step "+(i+1)+" names "+email+", who is not an active user of this tenant");
+            }
+            if("ORGANIZATION".equals(assignment)){
+                if(blank(s.get("organizationId")))throw bad("Step "+(i+1)+" ORGANIZATION assignment requires organizationId");
+                UUID organizationId;
+                try{organizationId=UUID.fromString(String.valueOf(s.get("organizationId")).trim());}
+                catch(IllegalArgumentException ex){throw bad("Step "+(i+1)+" has an organizationId that is not a valid identifier");}
+                if(!organizationRepository.existsByIdAndTenantIdAndActiveTrue(organizationId,tenantId))
+                    throw bad("Step "+(i+1)+" is assigned to a company that does not exist in this tenant or is inactive");
+            }
             if("PARTY_ROLE".equals(assignment)){
                 String role=upper(s.get("partyRole"));if(role==null||!PARTY_ROLES.contains(role))throw bad("Step "+(i+1)+" PARTY_ROLE assignment requires a valid partyRole");
                 if("INTERNAL_REVIEW".equals(authority)&&!("CONTRACTOR".equals(role)||"SUBCONTRACTOR".equals(role)))throw bad("INTERNAL_REVIEW must be assigned to CONTRACTOR or SUBCONTRACTOR");
