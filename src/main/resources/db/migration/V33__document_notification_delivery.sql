@@ -50,9 +50,11 @@ CREATE INDEX idx_notification_delivery_pending ON workflow_notification_deliveri
 CREATE UNIQUE INDEX uk_notification_approval_result
     ON workflow_notification_outbox(approval_id,event_type,target_user_id)
     WHERE approval_id IS NOT NULL AND approval_step_id IS NULL AND target_user_id IS NOT NULL;
-CREATE UNIQUE INDEX uk_notification_transmittal_target
+-- An issued transmittal should notify each recipient company once. Acknowledgements are deliberately
+-- not covered by this uniqueness key because every recipient acknowledgement is a distinct event for the sender.
+CREATE UNIQUE INDEX uk_notification_transmittal_issued
     ON workflow_notification_outbox(transmittal_id,event_type,target_organization_id)
-    WHERE transmittal_id IS NOT NULL AND target_organization_id IS NOT NULL;
+    WHERE transmittal_id IS NOT NULL AND event_type='TRANSMITTAL_ISSUED' AND target_organization_id IS NOT NULL;
 
 -- The first active workflow stage is seeded after the approval header. Emit assignment only for
 -- the current stage (or peers in its parallel group), never for future stages.
@@ -156,8 +158,7 @@ BEGIN
             tenant_id,project_id,transmittal_id,event_type,target_organization_id,payload)
         VALUES(tenant,project,NEW.transmittal_id,'TRANSMITTAL_ACKNOWLEDGED',sender_org,
                jsonb_build_object('transmittalNo',no_text,'subject',subject_text,
-                                  'recipientOrganizationId',NEW.recipient_organization_id,'acknowledgedAt',NEW.acknowledged_at))
-        ON CONFLICT DO NOTHING;
+                                  'recipientOrganizationId',NEW.recipient_organization_id,'acknowledgedAt',NEW.acknowledged_at));
     END IF;
     RETURN NEW;
 END; $$;
