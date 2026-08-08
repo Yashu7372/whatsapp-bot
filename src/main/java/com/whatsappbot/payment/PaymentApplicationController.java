@@ -1,6 +1,5 @@
 package com.whatsappbot.payment;
 
-import com.whatsappbot.project.ProjectAuthorizationService;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
@@ -16,6 +15,7 @@ import java.util.UUID;
 public class PaymentApplicationController {
 
     private final PaymentApplicationService paymentApplicationService;
+    private final PaymentApplicationReadService paymentApplicationReadService;
     private final PaymentAuthorizationService paymentAuthorizationService;
 
     @PostMapping
@@ -30,13 +30,7 @@ public class PaymentApplicationController {
     public ResponseEntity<List<PaymentApplicationService.ApplicationView>> list(
             @AuthenticationPrincipal Claims claims,
             @RequestParam UUID projectId) {
-        UUID tenantId=tenantId(claims),userId=userId(claims);
-        ProjectAuthorizationService.Decision d=paymentAuthorizationService.requireList(tenantId,userId,projectId);
-        List<PaymentApplicationService.ApplicationView> values=paymentApplicationService.list(tenantId,userId,projectId);
-        if(d.scope()== ProjectAuthorizationService.DataScope.ORGANIZATION){
-            values=values.stream().filter(v->v.claimedByOrgId().equals(d.organizationId())).toList();
-        }
-        return ResponseEntity.ok(values);
+        return ResponseEntity.ok(paymentApplicationReadService.list(tenantId(claims),userId(claims),projectId));
     }
 
     @GetMapping("/{id}")
