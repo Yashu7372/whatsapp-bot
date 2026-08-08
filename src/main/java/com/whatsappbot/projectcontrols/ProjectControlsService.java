@@ -30,25 +30,23 @@ public class ProjectControlsService {
     @Transactional(readOnly = true)
     public ControlsSummary summary(UUID tenantId, UUID userId, UUID projectId) {
         ProjectEntity project = projectService.get(tenantId, userId, projectId);
-        TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
+        TenantUserEntity actor = requireCommercialViewer(tenantId,userId,projectId);
         boolean broad = canSeeWholeCommercialProject(tenantId, projectId, actor);
         UUID orgId = broad ? null : actor.getOrganizationId();
 
         ProjectControlsRepository.MoneyTotals contracts = repository.contractTotals(tenantId, projectId, orgId);
         ForecastView latestForecast = latestForecast(tenantId, projectId, orgId);
+        BudgetTotals budget = repository.latestBudgetTotals(tenantId, projectId, orgId);
 
-        BudgetTotals budget;
-        BigDecimal visibleProjectContractValue;
-        if (broad) {
-            budget = repository.latestBudgetTotals(tenantId, projectId);
-            visibleProjectContractValue = project.getContractValue() == null ? BigDecimal.ZERO : project.getContractValue();
-        } else {
+        // Older organization scopes may not yet have an explicit company budget. In that case
+        // show only the company's contract + forecast position; never fall back to project budget.
+        if (!broad && budget.currentBudget().signum()==0 && repository.latestBudgetVersionId(tenantId,projectId,orgId)==null) {
             BigDecimal ownContract = contracts.original().add(contracts.changes());
             BigDecimal ownEtc = latestForecast == null ? BigDecimal.ZERO : latestForecast.estimateToComplete();
             budget = new BudgetTotals(ownContract, BigDecimal.ZERO, BigDecimal.ZERO, ownEtc);
-            visibleProjectContractValue = BigDecimal.ZERO;
         }
 
+        BigDecimal visibleProjectContractValue = broad && project.getContractValue()!=null ? project.getContractValue() : BigDecimal.ZERO;
         BigDecimal currentBudget = budget.currentBudget();
         BigDecimal eac = latestForecast != null ? latestForecast.forecastFinalCost() : budget.actualCost().add(budget.estimateToComplete());
         BigDecimal variance = currentBudget.subtract(eac);
@@ -59,21 +57,17 @@ public class ProjectControlsService {
 
     @Transactional(readOnly = true)
     public List<ContractView> contracts(UUID tenantId, UUID userId, UUID projectId) {
-        projectService.get(tenantId, userId, projectId);
-        TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
+        TenantUserEntity actor=requireCommercialViewer(tenantId,userId,projectId);
         UUID orgId = canSeeWholeCommercialProject(tenantId, projectId, actor) ? null : actor.getOrganizationId();
         return repository.findContracts(tenantId, projectId, orgId);
     }
 
     @Transactional
     public UUID createContract(UUID tenantId, UUID userId, UUID projectId, CreateContractRequest req) {
-        requireCommercialEditor(tenantId, userId, projectId);
+        requireProjectCommercialEditor(tenantId, userId, projectId);
         String model = req.commercialModel() == null ? "FIXED_FEE" : req.commercialModel().toUpperCase();
-        if (!COMMERCIAL_MODELS.contains(model))
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported commercial model: " + model);
-        if (!repository.activeParticipant(req.participantId(), tenantId, projectId))
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Participant is not active on this project");
-
+        if (!COMMERCIAL_MODELS.contains(model)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Unsupported commercial model: " + model);
+        if (!repository.activeParticipant(req.participantId(), tenantId, projectId)) throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Participant is not active on this project");
         String currency = req.currency();
         if (currency == null || currency.isBlank()) currency = projectService.get(tenantId, projectId).getCurrency();
         UUID id = UUID.randomUUID();
@@ -85,31 +79,34 @@ public class ProjectControlsService {
 
     @Transactional(readOnly = true)
     public BudgetView currentBudget(UUID tenantId, UUID userId, UUID projectId) {
-        projectService.get(tenantId, userId, projectId);
-        TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
-        if (!canSeeWholeCommercialProject(tenantId, projectId, actor))
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "Project budget is restricted to client/consultant commercial roles");
-
-        UUID versionId = repository.latestBudgetVersionId(tenantId, projectId);
+        TenantUserEntity actor=requireCommercialViewer(tenantId,userId,projectId);
+        UUID orgId=canSeeWholeCommercialProject(tenantId,projectId,actor)?null:actor.getOrganizationId();
+        UUID versionId = repository.latestBudgetVersionId(tenantId, projectId, orgId);
         if (versionId == null) return null;
         return new BudgetView(repository.budgetHeader(versionId), repository.budgetLines(tenantId, projectId, versionId),
-                repository.latestBudgetTotals(tenantId, projectId));
+                repository.latestBudgetTotals(tenantId, projectId, orgId));
     }
 
     @Transactional
     public UUID createBudgetVersion(UUID tenantId, UUID userId, UUID projectId, CreateBudgetVersionRequest req) {
-        TenantUserEntity actor = requireCommercialEditor(tenantId, userId, projectId);
+        TenantUserEntity actor=requireCommercialViewer(tenantId,userId,projectId);
+        requireManager(actor,"Budget configuration requires an organization manager or administrator");
+        UUID orgId=canSeeWholeCommercialProject(tenantId,projectId,actor)?null:actor.getOrganizationId();
+        if(orgId!=null && !repository.activeOrganization(tenantId,projectId,orgId))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Your organization is not active on this project");
         UUID id = UUID.randomUUID();
-        repository.insertBudgetVersion(id, tenantId, projectId, repository.nextBudgetVersion(tenantId, projectId), req.label(),
+        repository.insertBudgetVersion(id, tenantId, projectId, orgId, repository.nextBudgetVersion(tenantId, projectId, orgId), req.label(),
                 req.status()==null?"DRAFT":req.status().toUpperCase(), req.effectiveDate(), actor.getId());
         return id;
     }
 
     @Transactional
     public UUID addBudgetLine(UUID tenantId, UUID userId, UUID projectId, UUID versionId, CreateBudgetLineRequest req) {
-        requireCommercialEditor(tenantId, userId, projectId);
-        if (!repository.budgetVersionExists(versionId, tenantId, projectId))
-            throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Budget version not found");
+        TenantUserEntity actor=requireCommercialViewer(tenantId,userId,projectId);
+        requireManager(actor,"Budget configuration requires an organization manager or administrator");
+        UUID orgId=canSeeWholeCommercialProject(tenantId,projectId,actor)?null:actor.getOrganizationId();
+        if (!repository.budgetVersionExists(versionId, tenantId, projectId, orgId))
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Budget version is outside your permitted project/company scope");
         if (!repository.validParentLine(req.parentLineId(), tenantId, projectId, versionId))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Parent budget line must belong to the same project and budget version");
         UUID id=UUID.randomUUID();
@@ -121,8 +118,7 @@ public class ProjectControlsService {
 
     @Transactional(readOnly = true)
     public List<ForecastView> forecasts(UUID tenantId, UUID userId, UUID projectId) {
-        projectService.get(tenantId,userId,projectId);
-        TenantUserEntity actor=accessService.requireActiveUser(tenantId,userId);
+        TenantUserEntity actor=requireCommercialViewer(tenantId,userId,projectId);
         UUID orgId = canSeeWholeCommercialProject(tenantId,projectId,actor) ? null : actor.getOrganizationId();
         return repository.forecasts(tenantId, projectId, orgId);
     }
@@ -133,7 +129,6 @@ public class ProjectControlsService {
         UUID source=accessService.isTenantAdministrator(actor)?req.sourceOrganizationId():actor.getOrganizationId();
         if (source != null && !repository.activeOrganization(tenantId, projectId, source))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Forecast source organization is not active on this project");
-
         UUID id=UUID.randomUUID();
         repository.insertForecast(id,tenantId,projectId,source,req.snapshotDate()==null?LocalDate.now():req.snapshotDate(),
                 money(req.forecastFinalCost()),money(req.estimateToComplete()),req.physicalProgressPercent(),
@@ -146,25 +141,25 @@ public class ProjectControlsService {
         return values.isEmpty() ? null : values.get(0);
     }
 
-    private TenantUserEntity requireCommercialEditor(UUID tenantId,UUID userId,UUID projectId){
+    private TenantUserEntity requireCommercialViewer(UUID tenantId,UUID userId,UUID projectId){
         projectService.get(tenantId,userId,projectId);
         TenantUserEntity actor=accessService.requireActiveUser(tenantId,userId);
         if(accessService.isTenantAdministrator(actor)) return actor;
-        if(actor.getRole()!=UserRole.MANAGER && actor.getRole()!=UserRole.ADMIN)
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Commercial configuration requires a manager or administrator role");
+        requireManager(actor,"Commercial figures are restricted to organization managers and administrators");
+        if(actor.getOrganizationId()==null || !repository.activeOrganization(tenantId,projectId,actor.getOrganizationId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Commercial access requires an active project organization");
+        return actor;
+    }
+
+    private TenantUserEntity requireProjectCommercialEditor(UUID tenantId,UUID userId,UUID projectId){
+        TenantUserEntity actor=requireCommercialViewer(tenantId,userId,projectId);
+        if(accessService.isTenantAdministrator(actor)) return actor;
         accessService.requirePartyRole(tenantId,projectId,actor,PartyRole.CLIENT,PartyRole.CONSULTANT);
         return actor;
     }
 
     private TenantUserEntity requireForecastEditor(UUID tenantId, UUID userId, UUID projectId) {
-        projectService.get(tenantId,userId,projectId);
-        TenantUserEntity actor=accessService.requireActiveUser(tenantId,userId);
-        if(accessService.isTenantAdministrator(actor)) return actor;
-        if(actor.getRole()!=UserRole.MANAGER && actor.getRole()!=UserRole.ADMIN)
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Forecast submission requires a manager or administrator role");
-        if(actor.getOrganizationId()==null || !repository.activeOrganization(tenantId,projectId,actor.getOrganizationId()))
-            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Forecast submission requires an active project organization");
-        return actor;
+        return requireCommercialViewer(tenantId,userId,projectId);
     }
 
     private boolean canSeeWholeCommercialProject(UUID tenantId,UUID projectId,TenantUserEntity actor){
@@ -173,6 +168,10 @@ public class ProjectControlsService {
         return roles.contains(PartyRole.CLIENT)||roles.contains(PartyRole.CONSULTANT);
     }
 
+    private static void requireManager(TenantUserEntity actor,String message){
+        if(actor.getRole()!=UserRole.MANAGER && actor.getRole()!=UserRole.ADMIN)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,message);
+    }
     private static BigDecimal money(BigDecimal v){return v==null?BigDecimal.ZERO:v;}
 
     public record BudgetTotals(BigDecimal currentBudget,BigDecimal committedCost,BigDecimal actualCost,BigDecimal estimateToComplete){}
