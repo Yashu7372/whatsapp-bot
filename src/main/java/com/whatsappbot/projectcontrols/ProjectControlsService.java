@@ -127,7 +127,7 @@ public class ProjectControlsService {
 
     @Transactional
     public UUID createForecast(UUID tenantId, UUID userId, UUID projectId, CreateForecastRequest req) {
-        TenantUserEntity actor=requireCommercialEditor(tenantId,userId,projectId);
+        TenantUserEntity actor=requireForecastEditor(tenantId,userId,projectId);
         UUID source=accessService.isTenantAdministrator(actor)?req.sourceOrganizationId():actor.getOrganizationId();
         if (source != null && !repository.activeOrganization(tenantId, projectId, source))
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Forecast source organization is not active on this project");
@@ -151,6 +151,17 @@ public class ProjectControlsService {
         if(actor.getRole()!=UserRole.MANAGER && actor.getRole()!=UserRole.ADMIN)
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Commercial configuration requires a manager or administrator role");
         accessService.requirePartyRole(tenantId,projectId,actor,PartyRole.CLIENT,PartyRole.CONSULTANT);
+        return actor;
+    }
+
+    private TenantUserEntity requireForecastEditor(UUID tenantId, UUID userId, UUID projectId) {
+        projectService.get(tenantId,userId,projectId);
+        TenantUserEntity actor=accessService.requireActiveUser(tenantId,userId);
+        if(accessService.isTenantAdministrator(actor)) return actor;
+        if(actor.getRole()!=UserRole.MANAGER && actor.getRole()!=UserRole.ADMIN)
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Forecast submission requires a manager or administrator role");
+        if(actor.getOrganizationId()==null || !repository.activeOrganization(tenantId,projectId,actor.getOrganizationId()))
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Forecast submission requires an active project organization");
         return actor;
     }
 
