@@ -43,6 +43,14 @@ class ResourceCostRepository {
         return count != null && count > 0;
     }
 
+    boolean validBudgetLine(UUID tenantId, UUID projectId, UUID budgetLineId) {
+        if (budgetLineId == null) return true;
+        Integer count = jdbc.queryForObject(
+            "select count(*) from budget_lines where id=? and tenant_id=? and project_id=?",
+            Integer.class, budgetLineId, tenantId, projectId);
+        return count != null && count > 0;
+    }
+
     void insertResource(UUID id, UUID tenantId, UUID projectId, UUID orgId, String type, String code, String displayName, UUID userId) {
         jdbc.update("insert into project_resources(id,tenant_id,project_id,organization_id,resource_type,resource_code,display_name,user_id) values(?,?,?,?,?,?,?,?)",
             id, tenantId, projectId, orgId, type, code, displayName, userId);
