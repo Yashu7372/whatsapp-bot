@@ -16,6 +16,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -28,13 +29,6 @@ import java.util.UUID;
 
 /**
  * The one place any externally-sourced file becomes a {@link DocumentEntity}.
- *
- * <p>Every intake channel — a shareable upload link today, WhatsApp document messages, email
- * attachments later — funnels through here: buffer to a bounded temp file, scan it, hand the
- * scanned bytes to the pluggable {@link ObjectStorageService}, and only then create the document.
- * A file that fails or cannot be scanned never reaches {@link DocumentService}. The temp file is
- * this service's only footprint on local disk, and it is always removed before returning —
- * whatever storage provider is configured is the only durable home for the bytes.
  */
 @Slf4j
 @Service
@@ -54,15 +48,21 @@ public class DocumentIntakeService {
                                 String title, String description, String uploaderName,
                                 String uploaderEmail, UUID uploadLinkId) {}
 
+    /**
+     * DB writes for the media asset, document and first version share one transaction. The object
+     * store cannot participate in that transaction, so any failure after putObject is compensated
+     * by deleting the just-written object before the exception escapes.
+     */
+    @Transactional
     public DocumentEntity ingest(IntakeRequest req, String originalFileName, String contentType,
                                  InputStream data) {
         Path temp = bufferToTempFile(data);
+        StoredObjectRef ref = null;
         try {
             long sizeBytes = temp.toFile().length();
             ScanResult scan = scan(temp);
             String scanStatus = resolveScanStatus(scan);
 
-            StoredObjectRef ref;
             try (InputStream storeStream = Files.newInputStream(temp)) {
                 ref = objectStorageService.putObject(req.tenantId(), originalFileName, contentType,
                         storeStream, sizeBytes);
@@ -90,6 +90,11 @@ public class DocumentIntakeService {
             return documentService.createDocumentFromIntake(req.tenantId(), req.channel(), req.docType(),
                     req.projectId(), req.title(), req.description(), req.uploaderName(),
                     req.uploaderEmail(), req.uploadLinkId(), asset);
+        } catch (RuntimeException e) {
+            if (ref != null) {
+                objectStorageService.deleteObject(req.tenantId(), ref.objectKey());
+            }
+            throw e;
         } finally {
             deleteQuietly(temp);
         }
@@ -103,7 +108,6 @@ public class DocumentIntakeService {
         }
     }
 
-    /** CLEAN proceeds; INFECTED always rejects; UNAVAILABLE rejects unless failOpen is set. */
     private String resolveScanStatus(ScanResult scan) {
         return switch (scan.outcome()) {
             case CLEAN -> "CLEAN";
