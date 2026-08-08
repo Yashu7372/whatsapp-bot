@@ -8,5 +8,7 @@ import java.util.UUID;
 
 public interface DocumentUploadLinkEventRepository extends JpaRepository<DocumentUploadLinkEventEntity, UUID> {
     List<DocumentUploadLinkEventEntity> findAllByLinkIdOrderByCreatedAtDesc(UUID linkId);
-    long countByLinkIdAndEventTypeAndCreatedAtAfter(UUID linkId, String eventType, LocalDateTime after);
+
+    long countByLinkIdAndEventTypeAndIpAddressAndCreatedAtAfter(
+            UUID linkId, String eventType, String ipAddress, LocalDateTime after);
 }
