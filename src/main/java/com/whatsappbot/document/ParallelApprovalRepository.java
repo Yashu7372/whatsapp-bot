@@ -20,6 +20,18 @@ class ParallelApprovalRepository {
             """,rs->rs.next()?new ApprovalState(rs.getObject(1,UUID.class),rs.getInt(2),rs.getString(3),
                 rs.getObject(4,UUID.class),rs.getObject(5,UUID.class)):null,tenantId,approvalId);
     }
+
+    StepRow current(UUID approvalId,int currentStep){
+        return jdbc.query("""
+            select id,step_index,step_name,authority_type,assignment_type,assignment_organization_id,
+                   assignment_party_role,reviewer_email,required,decision
+              from document_approval_steps
+             where approval_id=? and step_index=?
+            """,rs->rs.next()?new StepRow(rs.getObject(1,UUID.class),rs.getInt(2),rs.getString(3),rs.getString(4),
+                rs.getString(5),rs.getObject(6,UUID.class),rs.getString(7),rs.getString(8),rs.getBoolean(9),rs.getString(10)):null,
+                approvalId,currentStep);
+    }
+
     String currentParallelGroup(UUID approvalId,int currentStep){
         return jdbc.query("select parallel_group from document_approval_steps where approval_id=? and step_index=?",
                 rs->rs.next()?rs.getString(1):null,approvalId,currentStep);
@@ -47,8 +59,7 @@ class ParallelApprovalRepository {
      * Moves onto the next stage and starts its SLA clock.
      *
      * <p>A due date only means anything once the stage is actionable, so it is stamped on arrival
-     * rather than at submission. Without this the due-soon and overdue notifications could never
-     * fire for anything past the first stage.
+     * rather than at submission. Parallel peers are activated together.
      */
     void advance(UUID tenantId,UUID approvalId,int next){
         jdbc.update("update document_approvals set current_step=? where tenant_id=? and id=?",next,tenantId,approvalId);
