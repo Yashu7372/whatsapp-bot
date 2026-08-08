@@ -123,7 +123,10 @@ BEGIN
     IF TG_OP = 'UPDATE' AND OLD.budget_line_id IS DISTINCT FROM NEW.budget_line_id THEN
         PERFORM refresh_budget_line_commitment(OLD.budget_line_id);
     END IF;
-    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -161,7 +164,10 @@ BEGIN
     IF TG_OP = 'UPDATE' AND OLD.budget_line_id IS DISTINCT FROM NEW.budget_line_id THEN
         PERFORM refresh_budget_line_actual(OLD.budget_line_id);
     END IF;
-    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -191,7 +197,10 @@ BEGIN
     IF TG_OP = 'UPDATE' AND OLD.budget_line_id IS DISTINCT FROM NEW.budget_line_id THEN
         PERFORM refresh_budget_line_variations(OLD.budget_line_id);
     END IF;
-    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
+    IF TG_OP = 'DELETE' THEN
+        RETURN OLD;
+    END IF;
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
