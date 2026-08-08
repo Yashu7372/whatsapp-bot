@@ -66,6 +66,12 @@ public class MediaAssetEntity {
     @Column(name = "status", nullable = false, length = 50)
     private String status = "UPLOADED";
 
+    @Column(name = "scan_status", nullable = false, length = 30)
+    private String scanStatus = "CLEAN";
+
+    @Column(name = "scanned_at")
+    private LocalDateTime scannedAt;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     private TenantUserEntity createdBy;

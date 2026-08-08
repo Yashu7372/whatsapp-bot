@@ -44,6 +44,8 @@ public class SecurityConfig {
                         .requestMatchers("/webhook", "/webhook/**").permitAll()
                         // Auth endpoints
                         .requestMatchers("/api/v1/auth/**").permitAll()
+                        // Unauthenticated document upload links — scoped by their own token, not a JWT
+                        .requestMatchers("/api/v1/public/**").permitAll()
                         // Actuator health
                         .requestMatchers("/actuator/health").permitAll()
                         // Everything else requires a valid JWT

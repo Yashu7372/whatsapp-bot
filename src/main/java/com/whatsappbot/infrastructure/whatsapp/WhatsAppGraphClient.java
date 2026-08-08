@@ -8,6 +8,8 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import com.fasterxml.jackson.databind.JsonNode;
+
 import java.io.IOException;
 import java.net.URI;
 import java.net.http.HttpClient;
@@ -74,6 +76,60 @@ public class WhatsAppGraphClient {
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
             throw new IllegalStateException("WhatsApp send interrupted",e);
+        }
+    }
+
+    /** A document a customer sent us — the bytes, whatever content type Meta reports, or null if it didn't say. */
+    public record MediaDownload(byte[] bytes, String contentType) {}
+
+    /**
+     * Pulls a media attachment by id: first resolves it to a short-lived CDN URL via the Graph
+     * API, then fetches that URL with the same bearer token. In mock mode this returns a small
+     * synthetic payload instead of calling Meta, the same way outbound sends are mocked, so the
+     * whole document-intake pipeline is exercisable without real WhatsApp credentials.
+     */
+    public MediaDownload downloadMedia(TenantEntity tenant, String mediaId) {
+        if (mockSendEnabled) {
+            log.info("MOCK WhatsApp media download. tenant={}, mediaId={}", tenant.getTenantCode(), mediaId);
+            byte[] mock = ("Mock WhatsApp document for mediaId=" + mediaId).getBytes();
+            return new MediaDownload(mock, "text/plain");
+        }
+
+        String accessToken = resolveAccessToken(tenant);
+        try {
+            String metadataUrl = "https://graph.facebook.com/" + graphApiVersion + "/" + mediaId;
+            HttpRequest metadataRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(metadataUrl))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .GET()
+                    .build();
+            HttpResponse<String> metadataResponse = httpClient.send(metadataRequest, HttpResponse.BodyHandlers.ofString());
+            if (metadataResponse.statusCode() >= 300) {
+                throw new IllegalStateException("WhatsApp media lookup returned HTTP " + metadataResponse.statusCode()
+                        + ": " + metadataResponse.body());
+            }
+            JsonNode metadata = objectMapper.readTree(metadataResponse.body());
+            String cdnUrl = metadata.path("url").asText(null);
+            String mimeType = metadata.path("mime_type").asText(null);
+            if (cdnUrl == null) {
+                throw new IllegalStateException("WhatsApp media metadata had no url: " + metadataResponse.body());
+            }
+
+            HttpRequest fileRequest = HttpRequest.newBuilder()
+                    .uri(URI.create(cdnUrl))
+                    .header("Authorization", "Bearer " + accessToken)
+                    .GET()
+                    .build();
+            HttpResponse<byte[]> fileResponse = httpClient.send(fileRequest, HttpResponse.BodyHandlers.ofByteArray());
+            if (fileResponse.statusCode() >= 300) {
+                throw new IllegalStateException("WhatsApp media download returned HTTP " + fileResponse.statusCode());
+            }
+            return new MediaDownload(fileResponse.body(), mimeType);
+        } catch (IOException e) {
+            throw new IllegalStateException("WhatsApp media download failed due to IO error", e);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("WhatsApp media download interrupted", e);
         }
     }
 

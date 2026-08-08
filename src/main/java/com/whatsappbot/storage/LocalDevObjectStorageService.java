@@ -8,7 +8,13 @@ import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.io.InputStream;
+import java.io.UncheckedIOException;
+import java.security.DigestInputStream;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
 import java.time.LocalDateTime;
+import java.util.HexFormat;
 import java.util.UUID;
 
 /**
@@ -24,6 +30,7 @@ public class LocalDevObjectStorageService implements ObjectStorageService {
 
     private final UploadTokenRepository uploadTokenRepository;
     private final TenantRepository tenantRepository;
+    private final StorageService storageService;
 
     @Value("${app.storage.local-base-url:http://localhost:8080}")
     private String baseUrl;
@@ -50,6 +57,25 @@ public class LocalDevObjectStorageService implements ObjectStorageService {
         String uploadUrl = baseUrl + "/api/v1/storage/local-upload/" + token;
         log.debug("Created local signed upload URL. token={} objectKey={}", token, objectKey);
         return new SignedUploadUrl(uploadUrl, token, objectKey, uploadTokenTtlSeconds);
+    }
+
+    @Override
+    public StoredObjectRef putObject(UUID tenantId, String fileName, String contentType,
+                                     InputStream data, long sizeBytes) {
+        try {
+            MessageDigest digest = MessageDigest.getInstance("SHA-256");
+            try (DigestInputStream digestStream = new DigestInputStream(data, digest)) {
+                StoredFile stored = storageService.store(tenantId, fileName, contentType, digestStream, sizeBytes);
+                String checksum = HexFormat.of().formatHex(digest.digest());
+                log.debug("Stored object (local provider). objectKey={} bytes={} checksum={}",
+                        stored.storedPath(), stored.sizeBytes(), checksum);
+                return new StoredObjectRef(stored.storedPath(), stored.sizeBytes(), checksum);
+            }
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException("SHA-256 not available", e);
+        } catch (UncheckedIOException | java.io.IOException e) {
+            throw new IllegalStateException("Failed to store object: " + fileName, e);
+        }
     }
 
     @Override

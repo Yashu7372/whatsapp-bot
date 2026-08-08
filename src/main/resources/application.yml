@@ -87,6 +87,21 @@ app:
     default-status: ${PROJECT_DEFAULT_STATUS:ACTIVE}
   document-notifications:
     dispatch-ms: ${DOCUMENT_NOTIFICATION_DISPATCH_MS:15000}
+  document-intake:
+    max-file-size-bytes: ${DOCUMENT_INTAKE_MAX_FILE_SIZE_BYTES:26214400}
+    whatsapp-doc-type: ${DOCUMENT_INTAKE_WHATSAPP_DOC_TYPE:WHATSAPP_INBOX}
+  malware-scan:
+    enabled: ${MALWARE_SCAN_ENABLED:true}
+    host: ${MALWARE_SCAN_HOST:localhost}
+    port: ${MALWARE_SCAN_PORT:3310}
+    connect-timeout-ms: ${MALWARE_SCAN_CONNECT_TIMEOUT_MS:5000}
+    read-timeout-ms: ${MALWARE_SCAN_READ_TIMEOUT_MS:30000}
+    fail-open: ${MALWARE_SCAN_FAIL_OPEN:false}
+  upload-links:
+    default-session-ttl-minutes: ${UPLOAD_LINK_SESSION_TTL_MINUTES:15}
+    max-password-attempts: ${UPLOAD_LINK_MAX_PASSWORD_ATTEMPTS:5}
+    password-lockout-minutes: ${UPLOAD_LINK_PASSWORD_LOCKOUT_MINUTES:15}
+    public-base-url: ${UPLOAD_LINK_PUBLIC_BASE_URL:http://localhost:5173}
     delivery-ms: ${DOCUMENT_NOTIFICATION_DELIVERY_MS:30000}
     sla-scan-ms: ${DOCUMENT_NOTIFICATION_SLA_SCAN_MS:600000}
     purge-ms: ${DOCUMENT_NOTIFICATION_PURGE_MS:86400000}

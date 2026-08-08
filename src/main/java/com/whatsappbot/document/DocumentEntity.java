@@ -98,6 +98,19 @@ public class DocumentEntity {
     @JoinColumn(name = "created_by")
     private TenantUserEntity createdBy;
 
+    @Column(name = "upload_link_id")
+    private UUID uploadLinkId;
+
+    @Column(name = "uploader_name", length = 255)
+    private String uploaderName;
+
+    @Column(name = "uploader_email", length = 320)
+    private String uploaderEmail;
+
+    @Enumerated(EnumType.STRING)
+    @Column(name = "intake_channel", nullable = false, length = 30)
+    private IntakeChannel intakeChannel = IntakeChannel.PORTAL;
+
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 

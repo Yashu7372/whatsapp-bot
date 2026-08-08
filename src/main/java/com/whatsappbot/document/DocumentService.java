@@ -121,6 +121,60 @@ public class DocumentService {
     }
 
     /**
+     * Creates a document from an external intake channel (upload link, WhatsApp — email later).
+     *
+     * <p>There is no acting {@link TenantUserEntity}: the submitter never authenticated. {@code
+     * createdBy} stays null and {@code uploaderName}/{@code uploaderEmail} carry whatever the
+     * channel collected instead. The asset handed in has already been malware-scanned and written
+     * to the pluggable object store by {@link com.whatsappbot.document.intake.DocumentIntakeService}
+     * — this method only ever attaches a reference to it, exactly like the authenticated path.
+     */
+    @Transactional
+    public DocumentEntity createDocumentFromIntake(UUID tenantId, IntakeChannel channel, String docType,
+                                                    UUID projectId, String title, String description,
+                                                    String uploaderName, String uploaderEmail,
+                                                    UUID uploadLinkId, MediaAssetEntity asset) {
+        TenantEntity tenant = tenantRepository.findById(tenantId)
+                .orElseThrow(() -> new IllegalArgumentException("Tenant not found"));
+
+        DocumentEntity doc = new DocumentEntity();
+        doc.setTenant(tenant);
+        doc.setTitle(title);
+        doc.setDocType(docType != null ? docType : "GENERAL");
+        doc.setDescription(description);
+        doc.setIntakeChannel(channel);
+        doc.setUploaderName(uploaderName);
+        doc.setUploaderEmail(uploaderEmail);
+        doc.setUploadLinkId(uploadLinkId);
+
+        workflowRepository.findByTenantIdAndDocType(tenantId, doc.getDocType())
+                .map(DocumentControlWorkflowEntity::getId)
+                .ifPresent(doc::setWorkflowId);
+
+        applyProjectContext(tenantId, doc, null, projectId);
+
+        doc = documentRepository.save(doc);
+
+        DocumentVersionEntity version = new DocumentVersionEntity();
+        version.setDocumentId(doc.getId());
+        version.setTenant(tenant);
+        version.setVersionNum(1);
+        version.setRevisionCode(revisionCodeFor(1));
+        version.setAssetId(asset.getId());
+        versionRepository.save(version);
+
+        Map<String, Object> payload = new LinkedHashMap<>();
+        payload.put("title", doc.getTitle());
+        payload.put("docType", doc.getDocType());
+        payload.put("channel", channel.name());
+        payload.put("uploaderEmail", uploaderEmail);
+        auditService.record(tenantId, doc.getId(), null, DocumentAuditService.DOCUMENT_CREATED, payload);
+
+        log.info("Document created via external intake. id={} tenant={} channel={}", doc.getId(), tenantId, channel);
+        return doc;
+    }
+
+    /**
      * Lists the documents the caller is entitled to see.
      *
      * <p>Tenant scoping alone is not the sharing boundary the project model promises: one tenant
@@ -639,8 +693,8 @@ public class DocumentService {
      * <p>Documents without a project keep working exactly as before — this is additive, so
      * existing non-project document flows are untouched.
      */
-    private void applyProjectContext(UUID tenantId, DocumentEntity doc, TenantUserEntity user,
-                                      UUID projectId) {
+    void applyProjectContext(UUID tenantId, DocumentEntity doc, TenantUserEntity user,
+                              UUID projectId) {
         if (projectId == null) {
             return;
         }
