@@ -33,26 +33,30 @@ public class WhatsAppGraphClient {
     private String fallbackAccessToken;
 
     public void sendTextMessage(TenantEntity tenant, String toPhoneNumber, String messageText) {
-        String url = "https://graph.facebook.com/" + graphApiVersion + "/" + tenant.getPhoneNumberId() + "/messages";
+        try {
+            sendTextMessageChecked(tenant,toPhoneNumber,messageText);
+        } catch (RuntimeException ex) {
+            log.error("WhatsApp send failed. tenant={}, to={}",tenant.getTenantCode(),toPhoneNumber,ex);
+        }
+    }
 
+    /** Same transport as the conversational reply path, but failures are surfaced so durable
+     * notification workers can retry instead of treating a logged HTTP failure as success. */
+    public void sendTextMessageChecked(TenantEntity tenant, String toPhoneNumber, String messageText) {
+        String url = "https://graph.facebook.com/" + graphApiVersion + "/" + tenant.getPhoneNumberId() + "/messages";
         Map<String, Object> payload = Map.of(
                 "messaging_product", "whatsapp",
                 "to", toPhoneNumber,
                 "type", "text",
-                "text", Map.of(
-                        "preview_url", false,
-                        "body", messageText
-                )
+                "text", Map.of("preview_url", false,"body", messageText)
         );
 
         if (mockSendEnabled) {
-            log.info("MOCK WhatsApp text send. tenant={}, to={}, payload={}",
-                    tenant.getTenantCode(), toPhoneNumber, toJson(payload));
+            log.info("MOCK WhatsApp text send. tenant={}, to={}, payload={}",tenant.getTenantCode(),toPhoneNumber,toJson(payload));
             return;
         }
 
         String accessToken = resolveAccessToken(tenant);
-
         try {
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
@@ -60,28 +64,21 @@ public class WhatsAppGraphClient {
                     .header("Content-Type", "application/json")
                     .POST(HttpRequest.BodyPublishers.ofString(toJson(payload)))
                     .build();
-
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
-
             if (response.statusCode() >= 300) {
-                log.warn("WhatsApp send failed. tenant={}, status={}, body={}",
-                        tenant.getTenantCode(), response.statusCode(), response.body());
-            } else {
-                log.info("WhatsApp reply sent. tenant={}, to={}", tenant.getTenantCode(), toPhoneNumber);
+                throw new IllegalStateException("WhatsApp Graph API returned HTTP "+response.statusCode()+": "+response.body());
             }
+            log.info("WhatsApp message sent. tenant={}, to={}", tenant.getTenantCode(), toPhoneNumber);
         } catch (IOException e) {
-            log.error("WhatsApp send failed due to IO error. tenant={}, to={}",
-                    tenant.getTenantCode(), toPhoneNumber, e);
+            throw new IllegalStateException("WhatsApp send failed due to IO error",e);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            log.error("WhatsApp send interrupted. tenant={}, to={}",
-                    tenant.getTenantCode(), toPhoneNumber, e);
+            throw new IllegalStateException("WhatsApp send interrupted",e);
         }
     }
 
     private String resolveAccessToken(TenantEntity tenant) {
         if (tenant.getAccessTokenEncrypted() != null && !tenant.getAccessTokenEncrypted().isBlank()) {
-            // Phase 1 keeps this simple. Replace with KMS/Vault decryption before production.
             return tenant.getAccessTokenEncrypted();
         }
         if (fallbackAccessToken == null || fallbackAccessToken.isBlank()) {
@@ -91,10 +88,7 @@ public class WhatsAppGraphClient {
     }
 
     private String toJson(Map<String, Object> payload) {
-        try {
-            return objectMapper.writeValueAsString(payload);
-        } catch (JsonProcessingException e) {
-            throw new IllegalStateException("Failed to serialize WhatsApp payload", e);
-        }
+        try { return objectMapper.writeValueAsString(payload); }
+        catch (JsonProcessingException e) { throw new IllegalStateException("Failed to serialize WhatsApp payload", e); }
     }
 }
