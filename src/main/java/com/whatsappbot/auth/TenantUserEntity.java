@@ -37,15 +37,20 @@ public class TenantUserEntity {
     @Column(name = "role", nullable = false, length = 50)
     private UserRole role = UserRole.ADMIN;
 
-    /**
-     * The company this user works for. Null for tenant staff who are not attached to a
-     * participating organization (platform administrators, for example).
-     */
     @Column(name = "organization_id")
     private UUID organizationId;
 
     @Column(name = "active", nullable = false)
     private boolean active = true;
+
+    @Column(name = "notification_phone", length = 50)
+    private String notificationPhone;
+
+    @Column(name = "email_notifications_enabled", nullable = false)
+    private boolean emailNotificationsEnabled = true;
+
+    @Column(name = "whatsapp_notifications_enabled", nullable = false)
+    private boolean whatsappNotificationsEnabled = false;
 
     @Column(name = "last_login_at")
     private LocalDateTime lastLoginAt;
