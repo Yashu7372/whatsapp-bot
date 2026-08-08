@@ -1,0 +1,40 @@
+# OCI Always Free single-VM runtime profile.
+# All values remain environment-driven; see oci/.env.example.
+
+spring:
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:50MB}
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+
+logging:
+  level:
+    com.whatsappbot: INFO
+    dev.langchain4j: INFO
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    access-expiry-seconds: ${JWT_ACCESS_EXPIRY_SECONDS:3600}
+    refresh-expiry-seconds: ${JWT_REFRESH_EXPIRY_SECONDS:604800}
+  storage:
+    # OCI Object Storage is a worthwhile later upgrade, but this deliberately
+    # uses a persistent OCI block-volume-backed Docker volume today. It keeps
+    # document upload/download behavior compatible with the existing service.
+    provider: ${APP_STORAGE_PROVIDER:local}
+    local-dir: ${STORAGE_LOCAL_DIR:/data/uploads}
+    local-base-url: ${STORAGE_LOCAL_BASE_URL}
+    upload-token-ttl-seconds: ${STORAGE_UPLOAD_TOKEN_TTL_SECONDS:900}
+  upload-links:
+    public-base-url: ${UPLOAD_LINK_PUBLIC_BASE_URL}

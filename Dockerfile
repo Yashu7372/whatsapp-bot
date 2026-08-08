@@ -22,6 +22,11 @@ WORKDIR /app
 # Copy the built jar
 COPY --from=builder /build/target/*.jar app.jar
 
+# The OCI deployment mounts a named volume here for document-control uploads.
+# Pre-create it with the runtime user's ownership so Docker copies the correct
+# permissions into a newly-created volume.
+RUN mkdir -p /data/uploads && chown -R appuser:appuser /app /data
+
 # Cloud Run listens on $PORT (default 8080)
 ENV SERVER_PORT=8080
 
