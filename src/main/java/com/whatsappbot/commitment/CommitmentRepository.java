@@ -101,7 +101,12 @@ class CommitmentRepository {
     }
 
     boolean validBudgetLine(UUID tenantId, UUID projectId, UUID lineId) {
-        Integer count=jdbc.queryForObject("select count(*) from budget_lines where id=? and tenant_id=? and project_id=?",Integer.class,lineId,tenantId,projectId);
+        if (lineId == null) return true;
+        Integer count=jdbc.queryForObject("""
+            select count(*) from budget_lines b
+             where b.id=? and b.tenant_id=? and b.project_id=?
+               and not exists(select 1 from budget_lines child where child.parent_line_id=b.id)
+            """,Integer.class,lineId,tenantId,projectId);
         return count!=null && count>0;
     }
 
