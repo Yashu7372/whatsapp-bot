@@ -19,7 +19,7 @@ public interface DocumentUploadLinkRepository extends JpaRepository<DocumentUplo
      * let concurrent requests exceed maxUploads. A failed surrounding transaction rolls the
      * reservation back together with the document write.
      */
-    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Modifying(flushAutomatically = true)
     @Query("""
             update DocumentUploadLinkEntity l
                set l.uploadCount = l.uploadCount + 1
