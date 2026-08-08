@@ -4,7 +4,6 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
-import java.time.LocalDateTime;
 import java.util.UUID;
 
 @Repository
@@ -27,13 +26,34 @@ class DocumentAuthorizationRepository {
                 rs->rs.next()?rs.getObject(1,UUID.class):null,tenantId,approvalId);
     }
 
+    ApprovalAuthority approvalAuthority(UUID tenantId, UUID approvalId) {
+        return jdbc.query("""
+                select a.document_id,d.project_id,d.originator_org_id,
+                       coalesce(s.authority_type,'TECHNICAL_REVIEW'),
+                       coalesce(s.assignment_type,'USER'),s.assignment_organization_id,
+                       s.assignment_party_role,s.reviewer_email
+                  from document_approvals a
+                  join documents d on d.id=a.document_id
+                  left join document_approval_steps s
+                    on s.approval_id=a.id and s.step_index=a.current_step
+                 where a.tenant_id=? and a.id=? and a.status='PENDING'
+                """, rs->rs.next()?new ApprovalAuthority(
+                        rs.getObject(1,UUID.class),rs.getObject(2,UUID.class),rs.getObject(3,UUID.class),
+                        rs.getString(4),rs.getString(5),rs.getObject(6,UUID.class),rs.getString(7),rs.getString(8)) : null,
+                tenantId,approvalId);
+    }
+
     boolean hasGrant(UUID tenantId, UUID documentId, UUID userId, UUID organizationId, String roleCode, String permission) {
         Integer count = jdbc.queryForObject("""
                 select count(*)
                   from document_access_grants
                  where tenant_id=? and document_id=? and permission_code=?
                    and (expires_at is null or expires_at > now())
-                   and (user_id=? or (? is not null and organization_id=?) or role_code=?)
+                   and (
+                        user_id=?
+                        or (? is not null and organization_id=?)
+                        or role_code=?
+                   )
                 """, Integer.class, tenantId, documentId, permission,
                 userId, organizationId, organizationId, roleCode);
         return count != null && count > 0;
@@ -51,37 +71,8 @@ class DocumentAuthorizationRepository {
         return count != null && count > 0;
     }
 
-    void updateSecurity(UUID tenantId, UUID documentId, String classification,
-                        String discipline, String packageCode, String locationCode) {
-        jdbc.update("""
-                update documents set security_classification=?, discipline=?, package_code=?, location_code=?, updated_at=now()
-                 where tenant_id=? and id=?
-                """, classification, discipline, packageCode, locationCode, tenantId, documentId);
-    }
-
-    boolean tenantUser(UUID tenantId, UUID userId) {
-        if (userId == null) return false;
-        Integer count=jdbc.queryForObject("select count(*) from tenant_users where tenant_id=? and id=? and active=true",
-                Integer.class,tenantId,userId);
-        return count!=null&&count>0;
-    }
-
-    boolean activeProjectOrganization(UUID tenantId, UUID projectId, UUID organizationId) {
-        if (projectId == null || organizationId == null) return false;
-        Integer count=jdbc.queryForObject("""
-                select count(*) from project_participants
-                 where tenant_id=? and project_id=? and organization_id=? and active=true
-                """,Integer.class,tenantId,projectId,organizationId);
-        return count!=null&&count>0;
-    }
-
-    void insertGrant(UUID tenantId, UUID documentId, UUID userId, UUID organizationId, String roleCode,
-                     String permission, UUID grantedBy, LocalDateTime expiresAt) {
-        jdbc.update("""
-                insert into document_access_grants(tenant_id,document_id,user_id,organization_id,role_code,permission_code,granted_by,expires_at)
-                values(?,?,?,?,?,?,?,?)
-                """,tenantId,documentId,userId,organizationId,roleCode,permission,grantedBy,expiresAt);
-    }
-
     record DocumentSecurity(UUID projectId, UUID originatorOrganizationId, String classification) {}
+    record ApprovalAuthority(UUID documentId, UUID projectId, UUID originatorOrganizationId,
+                             String authorityType, String assignmentType, UUID assignmentOrganizationId,
+                             String assignmentPartyRole, String reviewerEmail) {}
 }
