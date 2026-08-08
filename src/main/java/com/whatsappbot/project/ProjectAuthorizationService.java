@@ -11,14 +11,7 @@ import org.springframework.web.server.ResponseStatusException;
 import java.util.List;
 import java.util.UUID;
 
-/**
- * Central capability + scope policy for multi-company projects.
- *
- * <p>A single project id is intentionally shared by client, consultant, contractor and
- * subcontractors. Authorization therefore returns not just ALLOW/DENY, but the data scope that
- * the caller is allowed to see. Services must apply the returned organization id to commercial
- * queries when the scope is ORGANIZATION.
- */
+/** Central capability + scope policy for multi-company projects. */
 @Service
 @RequiredArgsConstructor
 public class ProjectAuthorizationService {
@@ -40,9 +33,9 @@ public class ProjectAuthorizationService {
         }
 
         UUID orgId = actor.getOrganizationId();
-        if (orgId == null) deny(permission);
+        if (orgId == null) return deny(permission);
         List<PartyRole> roles = accessService.rolesOnProject(tenantId, projectId, actor);
-        if (roles.isEmpty()) deny(permission);
+        if (roles.isEmpty()) return deny(permission);
 
         boolean manager = actor.getRole() == UserRole.MANAGER || actor.getRole() == UserRole.ADMIN;
         boolean reviewer = manager || actor.getRole() == UserRole.REVIEWER;
@@ -59,7 +52,28 @@ public class ProjectAuthorizationService {
                     ? new Decision(actor, DataScope.ORGANIZATION, orgId, roles)
                     : deny(permission);
 
+            // Legacy generic approval remains limited to parties administering the project.
             case DOCUMENT_APPROVE -> reviewer && (client || consultant)
+                    ? new Decision(actor, DataScope.ASSIGNED, orgId, roles)
+                    : deny(permission);
+
+            // Internal review belongs to the delivery organization itself.
+            case DOCUMENT_REVIEW_INTERNAL -> reviewer && contractor
+                    ? new Decision(actor, DataScope.ASSIGNED, orgId, roles)
+                    : deny(permission);
+
+            // Consultant technical review is distinct from the client's final approval.
+            case DOCUMENT_REVIEW_TECHNICAL -> reviewer && consultant
+                    ? new Decision(actor, DataScope.ASSIGNED, orgId, roles)
+                    : deny(permission);
+
+            case DOCUMENT_APPROVE_CLIENT -> reviewer && client
+                    ? new Decision(actor, DataScope.ASSIGNED, orgId, roles)
+                    : deny(permission);
+
+            // Commercial certification may be delegated to consultant or retained by client,
+            // but still requires manager-level commercial authority.
+            case DOCUMENT_CERTIFY_COMMERCIAL -> manager && (client || consultant)
                     ? new Decision(actor, DataScope.ASSIGNED, orgId, roles)
                     : deny(permission);
 
