@@ -15,21 +15,7 @@ import java.util.List;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Boots the whole application against a throwaway Postgres.
- *
- * <p>This is the test that was missing. Every other test in this repository is a Mockito unit test,
- * so the suite could pass while the application was unable to start at all — which is exactly what
- * happened when two migrations both claimed version 32. Running Flyway end to end and letting
- * Hibernate validate its mappings against the resulting schema turns two entire classes of
- * production-only failure into build failures.
- *
- * <p>The image is pgvector's Postgres build because the knowledge-base migration installs the
- * {@code vector} extension; stock {@code postgres:16} cannot run this migration set.
- *
- * <p>{@code disabledWithoutDocker} keeps the suite runnable on a machine with no Docker daemon:
- * the class is skipped rather than failing. CI has Docker, so there it genuinely runs.
- */
+/** Boots the whole application against a throwaway Postgres and verifies migration/runtime assumptions. */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(properties = {
         "spring.jpa.hibernate.ddl-auto=validate",
@@ -52,8 +38,6 @@ class SchemaIntegrationTest {
     @Test
     @DisplayName("every migration applies and Hibernate validates against the result")
     void schemaMatchesEntities() {
-        // Reaching this point already proves it: the context only starts if Flyway resolved and
-        // applied every script and ddl-auto=validate found no mapping drift.
         Integer applied = jdbc.queryForObject(
                 "select count(*) from flyway_schema_history where success = true", Integer.class);
         assertThat(applied).isNotNull().isPositive();
@@ -66,11 +50,30 @@ class SchemaIntegrationTest {
     @Test
     @DisplayName("notification dispatch tables carry the states the workers rely on")
     void notificationStatesArePersistable() {
-        // The dispatcher parks a claim in PROCESSING and the worker parks a disabled channel in
-        // SKIPPED; if either check constraint rejected the value, the pipeline would fail only
-        // under load, in production.
         assertThat(constraintAllows("workflow_notification_outbox", "PROCESSING")).isTrue();
         assertThat(constraintAllows("workflow_notification_deliveries", "SKIPPED")).isTrue();
+    }
+
+    @Test
+    @DisplayName("obsolete V31 workflow enrichment trigger is removed")
+    void obsoleteWorkflowEnrichmentTriggerIsGone() {
+        Integer oldTrigger = jdbc.queryForObject("""
+                select count(*) from pg_trigger t
+                  join pg_class c on c.oid=t.tgrelid
+                 where c.relname='document_approval_steps'
+                   and t.tgname='trg_enrich_document_approval_step'
+                   and not t.tgisinternal
+                """, Integer.class);
+        Integer initialParallelTrigger = jdbc.queryForObject("""
+                select count(*) from pg_trigger t
+                  join pg_class c on c.oid=t.tgrelid
+                 where c.relname='document_approval_steps'
+                   and t.tgname='trg_start_initial_parallel_step_sla'
+                   and not t.tgisinternal
+                """, Integer.class);
+
+        assertThat(oldTrigger).isZero();
+        assertThat(initialParallelTrigger).isEqualTo(1);
     }
 
     private boolean constraintAllows(String table, String status) {
