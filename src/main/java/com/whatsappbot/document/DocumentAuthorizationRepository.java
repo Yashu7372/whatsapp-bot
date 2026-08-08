@@ -21,6 +21,11 @@ class DocumentAuthorizationRepository {
                 : null, tenantId, documentId);
     }
 
+    UUID documentIdForApproval(UUID tenantId, UUID approvalId) {
+        return jdbc.query("select document_id from document_approvals where tenant_id=? and id=?",
+                rs->rs.next()?rs.getObject(1,UUID.class):null,tenantId,approvalId);
+    }
+
     boolean hasGrant(UUID tenantId, UUID documentId, UUID userId, UUID organizationId, String roleCode, String permission) {
         Integer count = jdbc.queryForObject("""
                 select count(*)
