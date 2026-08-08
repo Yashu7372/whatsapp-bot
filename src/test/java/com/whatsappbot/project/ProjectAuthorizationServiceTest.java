@@ -16,6 +16,7 @@ import static org.mockito.Mockito.when;
 @ExtendWith(MockitoExtension.class)
 class ProjectAuthorizationServiceTest {
     @Mock ProjectAccessService access;
+    @Mock ProjectCapabilityRepository capabilityRepository;
 
     @Test
     void contractorManagerGetsOrganizationCommercialScope(){
@@ -25,7 +26,7 @@ class ProjectAuthorizationServiceTest {
         when(access.isTenantAdministrator(actor)).thenReturn(false);
         when(access.rolesOnProject(tenant,project,actor)).thenReturn(List.of(PartyRole.CONTRACTOR));
 
-        ProjectAuthorizationService.Decision d=new ProjectAuthorizationService(access)
+        ProjectAuthorizationService.Decision d=new ProjectAuthorizationService(access,capabilityRepository)
                 .require(tenant,userId,project,ProjectPermission.COMMERCIAL_VIEW_ORGANIZATION);
 
         assertThat(d.scope()).isEqualTo(ProjectAuthorizationService.DataScope.ORGANIZATION);
@@ -40,7 +41,7 @@ class ProjectAuthorizationServiceTest {
         when(access.isTenantAdministrator(actor)).thenReturn(false);
         when(access.rolesOnProject(tenant,project,actor)).thenReturn(List.of(PartyRole.CLIENT));
 
-        ProjectAuthorizationService.Decision d=new ProjectAuthorizationService(access)
+        ProjectAuthorizationService.Decision d=new ProjectAuthorizationService(access,capabilityRepository)
                 .require(tenant,userId,project,ProjectPermission.PAYMENT_VIEW_PROJECT);
 
         assertThat(d.scope()).isEqualTo(ProjectAuthorizationService.DataScope.PROJECT);
