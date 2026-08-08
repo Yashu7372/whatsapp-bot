@@ -14,7 +14,19 @@ public interface DocumentUploadLinkRepository extends JpaRepository<DocumentUplo
     Optional<DocumentUploadLinkEntity> findByIdAndTenantId(UUID id, UUID tenantId);
     List<DocumentUploadLinkEntity> findAllByTenantIdOrderByCreatedAtDesc(UUID tenantId);
 
-    @Modifying
-    @Query("update DocumentUploadLinkEntity l set l.uploadCount = l.uploadCount + 1 where l.id = :id")
-    void incrementUploadCount(@Param("id") UUID id);
+    /**
+     * Atomically reserves one upload slot. This removes the check-then-increment race that could
+     * let concurrent requests exceed maxUploads. A failed surrounding transaction rolls the
+     * reservation back together with the document write.
+     */
+    @Modifying(flushAutomatically = true, clearAutomatically = true)
+    @Query("""
+            update DocumentUploadLinkEntity l
+               set l.uploadCount = l.uploadCount + 1
+             where l.id = :id
+               and l.revokedAt is null
+               and l.expiresAt > CURRENT_TIMESTAMP
+               and (l.maxUploads is null or l.uploadCount < l.maxUploads)
+            """)
+    int tryReserveUploadSlot(@Param("id") UUID id);
 }
