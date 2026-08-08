@@ -108,6 +108,14 @@ class DocumentAuthorizationRepository {
         args.add(docType);
         args.add(docType);
         args.add(tenantAdministrator);
+        // tenant-level (no project) arm: grant principals then assigned reviewer
+        args.addAll(viewGrants);
+        args.add(userId);
+        args.add(organizationId);
+        args.add(organizationId);
+        args.add(roleCode);
+        args.add(email);
+        // project arm
         args.add(organizationId);
         args.add(organizationId);
         args.addAll(viewGrants);
@@ -116,6 +124,8 @@ class DocumentAuthorizationRepository {
         args.add(organizationId);
         args.add(roleCode);
         args.add(email);
+        args.add(organizationId);
+        args.add(organizationId);
         args.add(limit);
         args.add(offset);
 
@@ -125,7 +135,19 @@ class DocumentAuthorizationRepository {
                    and (?::text is null or d.doc_type=?)
                    and (
                         ?::boolean
-                     or d.project_id is null
+                     or (d.project_id is null and (
+                             d.security_classification='PROJECT'
+                          or exists (select 1 from document_access_grants tg
+                                      where tg.tenant_id=d.tenant_id and tg.document_id=d.id
+                                        and tg.permission_code in %s
+                                        and (tg.expires_at is null or tg.expires_at > now())
+                                        and (tg.user_id=? or (? is not null and tg.organization_id=?) or tg.role_code=?))
+                          or exists (select 1 from document_approval_steps ts
+                                       join document_approvals ta on ta.id=ts.approval_id
+                                      where ta.tenant_id=d.tenant_id and ta.document_id=d.id
+                                        and ta.status='PENDING' and ts.decision is null
+                                        and ts.assignment_type='USER' and lower(ts.reviewer_email)=lower(?))
+                        ))
                      or (
                           exists (select 1 from project_participants pp
                                    where pp.tenant_id=d.tenant_id and pp.project_id=d.project_id
@@ -142,25 +164,53 @@ class DocumentAuthorizationRepository {
                                          join document_approvals a on a.id=s.approval_id
                                         where a.tenant_id=d.tenant_id and a.document_id=d.id
                                           and a.status='PENDING' and s.decision is null
-                                          and lower(s.reviewer_email)=lower(?))
+                                          and (
+                                               (s.assignment_type='USER' and lower(s.reviewer_email)=lower(?))
+                                            or (s.assignment_type='ORGANIZATION' and s.assignment_organization_id=?)
+                                            or (s.assignment_type='PARTY_ROLE' and exists (
+                                                   select 1 from project_participants pp2
+                                                    where pp2.tenant_id=d.tenant_id and pp2.project_id=d.project_id
+                                                      and pp2.organization_id=? and pp2.party_role=s.assignment_party_role
+                                                      and pp2.active=true))
+                                          ))
                           )
                         )
                    )
                  order by d.updated_at desc
                  limit ? offset ?
-                """.formatted(placeholders(viewGrants.size())),
+                """.formatted(placeholders(viewGrants.size()), placeholders(viewGrants.size())),
                 (rs, n) -> rs.getObject(1, UUID.class), args.toArray());
     }
 
-    boolean assignedToApproval(UUID tenantId, UUID documentId, String reviewerEmail) {
-        if (reviewerEmail == null) return false;
+    /**
+     * True when a pending workflow stage is assigned to this actor.
+     *
+     * <p>This used to match only on reviewer_email, i.e. USER assignments. A stage assigned to a
+     * company or to a party role therefore conferred no read access, so a reviewer could be
+     * required to decide a restricted document that every read endpoint refused to show them —
+     * approving blind. Company and party-role assignments now count, which is what the workflow
+     * meant by assigning them.
+     */
+    boolean assignedToApproval(UUID tenantId, UUID documentId, String reviewerEmail, UUID organizationId) {
         Integer count = jdbc.queryForObject("""
                 select count(*)
                   from document_approval_steps s
                   join document_approvals a on a.id=s.approval_id
-                 where a.tenant_id=? and a.document_id=? and a.status='PENDING'
-                   and s.decision is null and lower(s.reviewer_email)=lower(?)
-                """, Integer.class, tenantId, documentId, reviewerEmail);
+                  join documents d on d.id=a.document_id
+                 where a.tenant_id=? and a.document_id=? and a.status='PENDING' and s.decision is null
+                   and (
+                        (s.assignment_type='USER' and ? is not null and lower(s.reviewer_email)=lower(?))
+                     or (s.assignment_type='ORGANIZATION' and ? is not null and s.assignment_organization_id=?)
+                     or (s.assignment_type='PARTY_ROLE' and ? is not null and exists (
+                            select 1 from project_participants pp
+                             where pp.tenant_id=a.tenant_id and pp.project_id=d.project_id
+                               and pp.organization_id=? and pp.party_role=s.assignment_party_role
+                               and pp.active=true))
+                   )
+                """, Integer.class, tenantId, documentId,
+                reviewerEmail, reviewerEmail,
+                organizationId, organizationId,
+                organizationId, organizationId);
         return count != null && count > 0;
     }
 

@@ -71,7 +71,7 @@ class DocumentAuthorizationServiceTest {
         actor(UserRole.REVIEWER, otherOrg);
         security(project, ownerOrg, DocumentClassification.RESTRICTED);
         when(repository.hasGrant(any(), any(), any(), any(), anyString(), any())).thenReturn(false);
-        when(repository.assignedToApproval(any(), any(), any())).thenReturn(false);
+        when(repository.assignedToApproval(any(), any(), any(), any())).thenReturn(false);
 
         assertThatThrownBy(() -> service.requireView(tenant, userId, document))
                 .isInstanceOf(ResponseStatusException.class)
@@ -111,6 +111,50 @@ class DocumentAuthorizationServiceTest {
         TenantUserEntity admin = actor(UserRole.ADMIN, null);
         when(accessService.isTenantAdministrator(admin)).thenReturn(true);
         security(project, ownerOrg, DocumentClassification.RESTRICTED);
+
+        service.requireSecurityAdministration(tenant, userId, document);
+    }
+
+    @Test
+    @DisplayName("a party-role assignment lets the reviewer open what they must approve")
+    void partyRoleAssignmentConfersView() {
+        actor(UserRole.REVIEWER, otherOrg);
+        security(project, ownerOrg, DocumentClassification.RESTRICTED);
+        when(repository.hasGrant(any(), any(), any(), any(), anyString(), any())).thenReturn(false);
+        // Assigned by party role rather than by email — this used to return false, so the reviewer
+        // was required to decide a document every read endpoint refused to show them.
+        when(repository.assignedToApproval(tenant, document, "actor@example.test", otherOrg)).thenReturn(true);
+
+        service.requireView(tenant, userId, document);
+    }
+
+    @Test
+    @DisplayName("a restricted tenant-level document is no longer readable by everyone")
+    void tenantLevelRestrictedIsEnforced() {
+        actor(UserRole.VIEWER, null);
+        security(null, null, DocumentClassification.RESTRICTED);
+        when(repository.hasGrant(any(), any(), any(), any(), anyString(), any())).thenReturn(false);
+        when(repository.assignedToApproval(any(), any(), any(), any())).thenReturn(false);
+
+        assertThatThrownBy(() -> service.requireView(tenant, userId, document))
+                .isInstanceOf(ResponseStatusException.class)
+                .hasMessageContaining("403");
+    }
+
+    @Test
+    @DisplayName("a tenant-level document with no classification stays tenant-wide readable")
+    void tenantLevelProjectClassificationStaysOpen() {
+        actor(UserRole.VIEWER, null);
+        security(null, null, DocumentClassification.PROJECT);
+
+        service.requireView(tenant, userId, document);
+    }
+
+    @Test
+    @DisplayName("a manager may administer security on a tenant-level document")
+    void managerAdministersTenantLevelSecurity() {
+        actor(UserRole.MANAGER, otherOrg);
+        security(null, null, DocumentClassification.RESTRICTED);
 
         service.requireSecurityAdministration(tenant, userId, document);
     }

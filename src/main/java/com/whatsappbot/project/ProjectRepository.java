@@ -14,5 +14,7 @@ public interface ProjectRepository extends JpaRepository<ProjectEntity, UUID> {
 
     Optional<ProjectEntity> findByIdAndTenantId(UUID id, UUID tenantId);
 
+    boolean existsByIdAndTenantId(UUID id, UUID tenantId);
+
     boolean existsByTenantIdAndProjectCodeIgnoreCase(UUID tenantId, String projectCode);
 }

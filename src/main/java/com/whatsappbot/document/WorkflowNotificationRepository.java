@@ -61,7 +61,7 @@ class WorkflowNotificationRepository {
      */
     List<Recipient> recipients(OutboxRow row, List<String> notifiableRoles) {
         String roles = inClause(notifiableRoles.size());
-        Object[] args = new Object[6 + notifiableRoles.size() * 2 + 3];
+        Object[] args = new Object[6 + notifiableRoles.size() * 2 + 3 + 2];
         int i = 0;
         args[i++] = row.tenantId();
         args[i++] = row.targetUserId();
@@ -74,6 +74,8 @@ class WorkflowNotificationRepository {
         args[i++] = row.projectId();
         args[i++] = row.targetPartyRole();
         for (String role : notifiableRoles) args[i++] = role;
+        args[i++] = row.documentId();
+        args[i] = row.documentId();
 
         return jdbc.query("""
                 select distinct u.id,u.email,u.notification_phone,u.email_notifications_enabled,u.whatsapp_notifications_enabled
@@ -87,6 +89,36 @@ class WorkflowNotificationRepository {
                            and pp.party_role=? and pp.active=true
                     ) and u.role in %s)
                  )
+                   -- A notification carries the document code and title. Expanding an organization
+                   -- or party-role target must therefore not reach past the document's own
+                   -- classification, or the subject line becomes a disclosure channel for a
+                   -- document the reader is refused when they click through.
+                   and (? is null or exists (
+                        select 1 from documents d
+                         where d.id=? and d.tenant_id=u.tenant_id
+                           and (
+                                d.security_classification='PROJECT'
+                             or (d.originator_org_id is not null and d.originator_org_id=u.organization_id)
+                             or exists (select 1 from document_access_grants g
+                                         where g.tenant_id=d.tenant_id and g.document_id=d.id
+                                           and (g.expires_at is null or g.expires_at > now())
+                                           and (g.user_id=u.id or (u.organization_id is not null and g.organization_id=u.organization_id)
+                                                or g.role_code=u.role))
+                             or exists (select 1 from document_approval_steps s
+                                          join document_approvals a on a.id=s.approval_id
+                                         where a.tenant_id=d.tenant_id and a.document_id=d.id
+                                           and a.status='PENDING' and s.decision is null
+                                           and (
+                                                (s.assignment_type='USER' and lower(s.reviewer_email)=lower(u.email))
+                                             or (s.assignment_type='ORGANIZATION' and s.assignment_organization_id=u.organization_id)
+                                             or (s.assignment_type='PARTY_ROLE' and exists (
+                                                    select 1 from project_participants pp3
+                                                     where pp3.tenant_id=d.tenant_id and pp3.project_id=d.project_id
+                                                       and pp3.organization_id=u.organization_id
+                                                       and pp3.party_role=s.assignment_party_role and pp3.active=true))
+                                           ))
+                           )
+                   ))
                 """.formatted(roles, roles),
                 (rs, n) -> new Recipient(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
                         rs.getBoolean(4), rs.getBoolean(5)), args);
@@ -242,9 +274,9 @@ class WorkflowNotificationRepository {
                   join workflow_notification_outbox o on o.id=d.outbox_id
                   join tenant_users u on u.id=d.user_id
                  where d.tenant_id=? order by d.created_at desc limit ?
-                """, (rs, n) -> new DeliveryAudit(rs.getObject(1, UUID.class), rs.getString(2), rs.getString(3),
-                rs.getString(4), rs.getInt(5), rs.getString(6), ts(rs.getTimestamp(7)), ts(rs.getTimestamp(8)),
-                rs.getString(9), rs.getString(10)), tenantId, limit);
+                """, (rs, n) -> new DeliveryAudit(rs.getObject(1, UUID.class), rs.getString(2),
+                mask(rs.getString(3)), rs.getString(4), rs.getInt(5), rs.getString(6),
+                ts(rs.getTimestamp(7)), ts(rs.getTimestamp(8)), rs.getString(9), rs.getString(10)), tenantId, limit);
     }
 
     private static String inClause(int size) {
@@ -253,6 +285,25 @@ class WorkflowNotificationRepository {
 
     private static LocalDateTime ts(Timestamp t) {
         return t == null ? null : t.toLocalDateTime();
+    }
+
+    /**
+     * Partially masks a delivery destination.
+     *
+     * <p>The audit exists to answer "did this reach the right channel and why did it fail", which
+     * a partial value still answers. Returning every address and phone number in full turned an
+     * operational screen into a directory of personal contact details.
+     */
+    private static String mask(String destination) {
+        if (destination == null || destination.isBlank()) return destination;
+        int at = destination.indexOf('@');
+        if (at > 0) {
+            String local = destination.substring(0, at);
+            String visible = local.substring(0, Math.min(2, local.length()));
+            return visible + "***" + destination.substring(at);
+        }
+        int keep = Math.min(4, destination.length());
+        return "***" + destination.substring(destination.length() - keep);
     }
 
     private static String truncate(String s) {

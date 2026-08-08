@@ -13,8 +13,34 @@ import java.util.UUID;
 class ApprovalWorklistRepository {
     private final JdbcTemplate jdbc;
 
+    /**
+     * Actionable stages for one user, resolved in a single query.
+     *
+     * <p>The worklist previously loaded every pending stage in the tenant and then ran the full
+     * authority evaluation per row inside a try/catch. The assignment test is expressed here as a
+     * predicate instead. It answers "is this stage addressed to me"; the contractual authority
+     * check still runs in the service, so this narrows the set rather than replacing the policy.
+     */
+    List<Row> pendingFor(UUID tenantId,UUID userId,String email,UUID organizationId){
+        return jdbc.query(baseQuery("""
+             and (
+                  (s.assignment_type='USER' and ? is not null and lower(s.reviewer_email)=lower(?))
+               or (s.assignment_type='ORGANIZATION' and ? is not null and s.assignment_organization_id=?)
+               or (s.assignment_type='PARTY_ROLE' and ? is not null and exists (
+                      select 1 from project_participants pp
+                       where pp.tenant_id=a.tenant_id and pp.project_id=d.project_id
+                         and pp.organization_id=? and pp.party_role=s.assignment_party_role and pp.active=true))
+               or ? is null
+             )
+            """),MAPPER,tenantId,email,email,organizationId,organizationId,organizationId,organizationId,userId);
+    }
+
     List<Row> pending(UUID tenantId){
-        return jdbc.query("""
+        return jdbc.query(baseQuery(""),MAPPER,tenantId);
+    }
+
+    private static String baseQuery(String extra){
+        return """
             select s.id,a.id,a.document_id,d.project_id,d.document_code,d.title,
                    s.step_index,s.step_name,s.authority_type,s.assignment_type,
                    s.assignment_organization_id,s.assignment_party_role,s.reviewer_email,
@@ -27,13 +53,16 @@ class ApprovalWorklistRepository {
                     s.parallel_group is not null and s.parallel_group=(
                         select x.parallel_group from document_approval_steps x
                          where x.approval_id=a.id and x.step_index=a.current_step)))
+            """+extra+"""
              order by coalesce(s.due_at,'9999-12-31'::timestamp),a.started_at,s.step_index
-            """,(rs,n)->new Row(
-                rs.getObject(1,UUID.class),rs.getObject(2,UUID.class),rs.getObject(3,UUID.class),
-                rs.getObject(4,UUID.class),rs.getString(5),rs.getString(6),rs.getInt(7),rs.getString(8),
-                rs.getString(9),rs.getString(10),rs.getObject(11,UUID.class),rs.getString(12),rs.getString(13),
-                rs.getBoolean(14),rs.getString(15),ts(rs.getTimestamp(16)),ts(rs.getTimestamp(17)),ts(rs.getTimestamp(18))),tenantId);
+            """;
     }
+
+    private static final org.springframework.jdbc.core.RowMapper<Row> MAPPER=(rs,n)->new Row(
+            rs.getObject(1,UUID.class),rs.getObject(2,UUID.class),rs.getObject(3,UUID.class),
+            rs.getObject(4,UUID.class),rs.getString(5),rs.getString(6),rs.getInt(7),rs.getString(8),
+            rs.getString(9),rs.getString(10),rs.getObject(11,UUID.class),rs.getString(12),rs.getString(13),
+            rs.getBoolean(14),rs.getString(15),ts(rs.getTimestamp(16)),ts(rs.getTimestamp(17)),ts(rs.getTimestamp(18)));
     List<Row> overdue(UUID tenantId){return pending(tenantId).stream().filter(r->r.dueAt()!=null&&r.dueAt().isBefore(LocalDateTime.now())&&r.escalatedAt()==null).toList();}
     void markEscalated(UUID stepId){jdbc.update("update document_approval_steps set escalated_at=now() where id=? and escalated_at is null",stepId);}
     void enqueueEscalation(UUID tenantId,Row r){jdbc.update("""

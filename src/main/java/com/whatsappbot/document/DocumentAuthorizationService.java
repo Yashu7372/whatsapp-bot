@@ -64,12 +64,16 @@ public class DocumentAuthorizationService {
         TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
         if (accessService.isTenantAdministrator(actor)) return;
 
-        if (security.projectId() != null) {
-            projectAuthorization.require(tenantId, userId, security.projectId(), ProjectPermission.DOCUMENT_SECURITY_ADMIN);
-        } else if (actor.getRole() != UserRole.ADMIN && actor.getRole() != UserRole.MANAGER) {
+        if (security.projectId() == null) {
+            // Tenant-level documents have no originating company to own them, so the tenant-level
+            // ADMIN/MANAGER roles are the correct authority. Requiring an ownership match here
+            // would have left these documents administrable only by platform staff.
+            if (actor.getRole() == UserRole.ADMIN || actor.getRole() == UserRole.MANAGER
+                    || hasGrant(tenantId, documentId, actor, MANAGE)) return;
             throw securityDenied(documentId);
         }
 
+        projectAuthorization.require(tenantId, userId, security.projectId(), ProjectPermission.DOCUMENT_SECURITY_ADMIN);
         boolean originator = actor.getOrganizationId() != null
                 && actor.getOrganizationId().equals(security.originatorOrganizationId());
         if (originator || hasGrant(tenantId, documentId, actor, MANAGE)) return;
@@ -88,13 +92,7 @@ public class DocumentAuthorizationService {
             return;
         }
 
-        ProjectPermission permission=switch(ctx.authorityType()){
-            case "INTERNAL_REVIEW" -> ProjectPermission.DOCUMENT_REVIEW_INTERNAL;
-            case "TECHNICAL_REVIEW" -> ProjectPermission.DOCUMENT_REVIEW_TECHNICAL;
-            case "CLIENT_APPROVAL" -> ProjectPermission.DOCUMENT_APPROVE_CLIENT;
-            case "COMMERCIAL_CERTIFICATION" -> ProjectPermission.DOCUMENT_CERTIFY_COMMERCIAL;
-            default -> throw new ResponseStatusException(HttpStatus.CONFLICT,"Unsupported workflow authority: "+ctx.authorityType());
-        };
+        ProjectPermission permission=ApprovalAuthority.of(ctx.authorityType()).permission();
         ProjectAuthorizationService.Decision decision=projectAuthorization.require(tenantId,userId,ctx.projectId(),permission);
         if(accessService.isTenantAdministrator(decision.actor())) return;
 
@@ -121,10 +119,20 @@ public class DocumentAuthorizationService {
         if(security==null) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Document not found: "+documentId);
         TenantUserEntity actor=accessService.requireActiveUser(tenantId,userId);
         if(security.projectId()==null){
-            if(!mutation) return;
+            // A document with no project is tenant-wide, but its classification still has to mean
+            // something. Reads used to return unconditionally here, so marking a tenant-level
+            // document RESTRICTED changed nothing while the register kept displaying the badge —
+            // the interface asserted a protection the server never applied.
             if(accessService.isTenantAdministrator(actor)) return;
             boolean manager=actor.getRole()==UserRole.ADMIN||actor.getRole()==UserRole.MANAGER;
-            if(manager||hasGrant(tenantId,documentId,actor,grantPermission))return;
+            boolean granted=hasGrant(tenantId,documentId,actor,grantPermission);
+            boolean assigned=!mutation&&repository.assignedToApproval(tenantId,documentId,actor.getEmail(),actor.getOrganizationId());
+            String tenantClassification=security.classification()==null?DocumentClassification.PROJECT.name():security.classification();
+            boolean permitted=switch(DocumentClassification.of(tenantClassification,documentId)){
+                case PROJECT -> !mutation||manager||granted;
+                case ORGANIZATION,RESTRICTED -> granted||assigned||(mutation&&manager&&granted);
+            };
+            if(permitted) return;
             throw denied(documentId);
         }
         ProjectPermission projectPermission=mutation
@@ -134,7 +142,7 @@ public class DocumentAuthorizationService {
         if(accessService.isTenantAdministrator(actor)) return;
         boolean owner=actor.getOrganizationId()!=null&&actor.getOrganizationId().equals(security.originatorOrganizationId());
         boolean explicit=hasGrant(tenantId,documentId,actor,grantPermission);
-        boolean assigned=!mutation&&repository.assignedToApproval(tenantId,documentId,actor.getEmail());
+        boolean assigned=!mutation&&repository.assignedToApproval(tenantId,documentId,actor.getEmail(),actor.getOrganizationId());
         String classification=security.classification()==null?DocumentClassification.PROJECT.name():security.classification();
         boolean allowed=switch(DocumentClassification.of(classification,documentId)){
             case PROJECT -> !mutation||owner||explicit;

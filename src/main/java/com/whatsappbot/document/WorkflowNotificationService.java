@@ -4,10 +4,12 @@ import com.whatsappbot.domain.tenant.TenantRepository;
 import com.whatsappbot.infrastructure.whatsapp.WhatsAppGraphClient;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpStatus;
 import org.springframework.mail.SimpleMailMessage;
 import org.springframework.mail.javamail.JavaMailSender;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
@@ -126,6 +128,9 @@ public class WorkflowNotificationService {
         return x.getMessage() == null ? x.getClass().getSimpleName() : x.getMessage();
     }
 
+    /** E.164: a leading +, a non-zero country digit, then up to 14 more digits. */
+    private static final java.util.regex.Pattern E164 = java.util.regex.Pattern.compile("^\\+[1-9]\\d{7,14}$");
+
     private static final class ChannelDisabledException extends RuntimeException {
         ChannelDisabledException(String message) { super(message); }
     }
@@ -147,7 +152,31 @@ public class WorkflowNotificationService {
     }
 
     public void preferences(UUID tenantId, UUID userId, boolean email, boolean whatsapp, String phone) {
-        repository.updatePreferences(tenantId, userId, email, whatsapp, phone);
+        repository.updatePreferences(tenantId, userId, email, whatsapp, normalisePhone(whatsapp, phone));
+    }
+
+    /**
+     * Validates a WhatsApp destination before it is stored.
+     *
+     * <p>The value was previously trimmed and accepted, which meant any user could point the
+     * tenant WhatsApp Business number at an arbitrary destination and have the platform send to
+     * it. Requiring E.164 does not prove ownership, but it stops free-form values reaching the
+     * Graph API and makes an unintended destination obvious.
+     */
+    private static String normalisePhone(boolean whatsappEnabled, String phone) {
+        if (phone == null || phone.isBlank()) {
+            if (whatsappEnabled) {
+                throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                        "A WhatsApp number is required to enable WhatsApp notifications");
+            }
+            return null;
+        }
+        String compact = phone.replaceAll("[\\s()-]", "").trim();
+        if (!E164.matcher(compact).matches()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Enter the WhatsApp number in international format, for example +971501234567");
+        }
+        return compact;
     }
 
     public List<WorkflowNotificationRepository.DeliveryAudit> audit(UUID tenantId, int limit) {

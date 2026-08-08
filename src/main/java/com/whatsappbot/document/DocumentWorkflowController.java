@@ -27,7 +27,7 @@ public class DocumentWorkflowController {
                                                     @RequestBody DocumentService.CreateWorkflowRequest req) {
         UUID tenantId=tenantId(claims),userId=userId(claims);
         requireWorkflowAdministrator(tenantId,userId);
-        validator.validate(req.steps());
+        validator.validate(tenantId,req.steps());
         return ResponseEntity.ok(toResponse(documentService.createWorkflow(tenantId,req)));
     }
 
@@ -43,7 +43,7 @@ public class DocumentWorkflowController {
                                                     @RequestBody DocumentService.UpdateWorkflowRequest req) {
         UUID tenantId=tenantId(claims),userId=userId(claims);
         requireWorkflowAdministrator(tenantId,userId);
-        if(req.steps()!=null) validator.validate(req.steps());
+        if(req.steps()!=null) validator.validate(tenantId,req.steps());
         return ResponseEntity.ok(toResponse(documentService.updateWorkflow(tenantId,id,req)));
     }
 

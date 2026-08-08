@@ -43,7 +43,24 @@ class ParallelApprovalRepository {
         return jdbc.query("select min(step_index) from document_approval_steps where approval_id=? and step_index>? and decision is null",
                 rs->rs.next()?(Integer)rs.getObject(1):null,approvalId,afterIndex);
     }
-    void advance(UUID tenantId,UUID approvalId,int next){jdbc.update("update document_approvals set current_step=? where tenant_id=? and id=?",next,tenantId,approvalId);}
+    /**
+     * Moves onto the next stage and starts its SLA clock.
+     *
+     * <p>A due date only means anything once the stage is actionable, so it is stamped on arrival
+     * rather than at submission. Without this the due-soon and overdue notifications could never
+     * fire for anything past the first stage.
+     */
+    void advance(UUID tenantId,UUID approvalId,int next){
+        jdbc.update("update document_approvals set current_step=? where tenant_id=? and id=?",next,tenantId,approvalId);
+        jdbc.update("""
+                update document_approval_steps
+                   set due_at=now()+(sla_hours * interval '1 hour')
+                 where approval_id=? and decision is null and sla_hours is not null and due_at is null
+                   and (step_index=? or (parallel_group is not null
+                        and parallel_group=(select parallel_group from document_approval_steps
+                                             where approval_id=? and step_index=?)))
+                """,approvalId,next,approvalId,next);
+    }
     void finish(UUID tenantId,UUID approvalId,String status){jdbc.update("update document_approvals set status=?,completed_at=now() where tenant_id=? and id=?",status,tenantId,approvalId);}
     void documentStatus(UUID tenantId,UUID documentId,String status){jdbc.update("update documents set status=?,updated_at=now() where tenant_id=? and id=?",status,tenantId,documentId);}
     void reviewOutcome(UUID tenantId,UUID documentId,String outcome){jdbc.update("update documents set review_outcome=?,updated_at=now() where tenant_id=? and id=?",outcome,tenantId,documentId);}
