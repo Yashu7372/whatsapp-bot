@@ -81,9 +81,9 @@ class WorkflowNotificationRepository {
                 select distinct u.id,u.email,u.notification_phone,u.email_notifications_enabled,u.whatsapp_notifications_enabled
                   from tenant_users u
                  where u.tenant_id=? and u.active=true and (
-                       (? is not null and u.id=?)
-                    or (? is not null and u.organization_id=? and u.role in %s)
-                    or (? is not null and exists (
+                       (?::uuid is not null and u.id=?)
+                    or (?::uuid is not null and u.organization_id=? and u.role in %s)
+                    or (?::text is not null and exists (
                         select 1 from project_participants pp
                          where pp.tenant_id=? and pp.project_id=? and pp.organization_id=u.organization_id
                            and pp.party_role=? and pp.active=true
@@ -93,7 +93,7 @@ class WorkflowNotificationRepository {
                    -- or party-role target must therefore not reach past the document's own
                    -- classification, or the subject line becomes a disclosure channel for a
                    -- document the reader is refused when they click through.
-                   and (? is null or exists (
+                   and (?::uuid is null or exists (
                         select 1 from documents d
                          where d.id=? and d.tenant_id=u.tenant_id
                            and (

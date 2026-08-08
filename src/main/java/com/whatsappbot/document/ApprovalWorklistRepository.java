@@ -24,13 +24,13 @@ class ApprovalWorklistRepository {
     List<Row> pendingFor(UUID tenantId,UUID userId,String email,UUID organizationId){
         return jdbc.query(baseQuery("""
              and (
-                  (s.assignment_type='USER' and ? is not null and lower(s.reviewer_email)=lower(?))
-               or (s.assignment_type='ORGANIZATION' and ? is not null and s.assignment_organization_id=?)
-               or (s.assignment_type='PARTY_ROLE' and ? is not null and exists (
+                  (s.assignment_type='USER' and ?::text is not null and lower(s.reviewer_email)=lower(?))
+               or (s.assignment_type='ORGANIZATION' and ?::uuid is not null and s.assignment_organization_id=?::uuid)
+               or (s.assignment_type='PARTY_ROLE' and ?::uuid is not null and exists (
                       select 1 from project_participants pp
                        where pp.tenant_id=a.tenant_id and pp.project_id=d.project_id
-                         and pp.organization_id=? and pp.party_role=s.assignment_party_role and pp.active=true))
-               or ? is null
+                         and pp.organization_id=?::uuid and pp.party_role=s.assignment_party_role and pp.active=true))
+               or ?::uuid is null
              )
             """),MAPPER,tenantId,email,email,organizationId,organizationId,organizationId,organizationId,userId);
     }

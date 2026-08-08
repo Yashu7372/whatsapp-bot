@@ -73,7 +73,7 @@ class DocumentAuthorizationRepository {
                    and (expires_at is null or expires_at > now())
                    and (
                         user_id=?
-                        or (? is not null and organization_id=?)
+                        or (?::uuid is not null and organization_id=?)
                         or role_code=?
                    )
                 """.formatted(placeholders(acceptedPermissions.size())), Integer.class, args);
@@ -141,7 +141,7 @@ class DocumentAuthorizationRepository {
                                       where tg.tenant_id=d.tenant_id and tg.document_id=d.id
                                         and tg.permission_code in %s
                                         and (tg.expires_at is null or tg.expires_at > now())
-                                        and (tg.user_id=? or (? is not null and tg.organization_id=?) or tg.role_code=?))
+                                        and (tg.user_id=? or (?::uuid is not null and tg.organization_id=?) or tg.role_code=?))
                           or exists (select 1 from document_approval_steps ts
                                        join document_approvals ta on ta.id=ts.approval_id
                                       where ta.tenant_id=d.tenant_id and ta.document_id=d.id
@@ -159,7 +159,7 @@ class DocumentAuthorizationRepository {
                                         where g.tenant_id=d.tenant_id and g.document_id=d.id
                                           and g.permission_code in %s
                                           and (g.expires_at is null or g.expires_at > now())
-                                          and (g.user_id=? or (? is not null and g.organization_id=?) or g.role_code=?))
+                                          and (g.user_id=? or (?::uuid is not null and g.organization_id=?) or g.role_code=?))
                             or exists (select 1 from document_approval_steps s
                                          join document_approvals a on a.id=s.approval_id
                                         where a.tenant_id=d.tenant_id and a.document_id=d.id
@@ -199,9 +199,9 @@ class DocumentAuthorizationRepository {
                   join documents d on d.id=a.document_id
                  where a.tenant_id=? and a.document_id=? and a.status='PENDING' and s.decision is null
                    and (
-                        (s.assignment_type='USER' and ? is not null and lower(s.reviewer_email)=lower(?))
-                     or (s.assignment_type='ORGANIZATION' and ? is not null and s.assignment_organization_id=?)
-                     or (s.assignment_type='PARTY_ROLE' and ? is not null and exists (
+                        (s.assignment_type='USER' and ?::text is not null and lower(s.reviewer_email)=lower(?))
+                     or (s.assignment_type='ORGANIZATION' and ?::uuid is not null and s.assignment_organization_id=?)
+                     or (s.assignment_type='PARTY_ROLE' and ?::uuid is not null and exists (
                             select 1 from project_participants pp
                              where pp.tenant_id=a.tenant_id and pp.project_id=d.project_id
                                and pp.organization_id=? and pp.party_role=s.assignment_party_role
