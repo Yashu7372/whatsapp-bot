@@ -110,6 +110,8 @@ public class ProjectControlsService {
         requireCommercialEditor(tenantId, userId, projectId);
         if (!repository.budgetVersionExists(versionId, tenantId, projectId))
             throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Budget version not found");
+        if (!repository.validParentLine(req.parentLineId(), tenantId, projectId, versionId))
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Parent budget line must belong to the same project and budget version");
         UUID id=UUID.randomUUID();
         repository.insertBudgetLine(id,tenantId,projectId,versionId,req.parentLineId(),req.costCode(),req.name(),
                 money(req.originalBudget()),money(req.approvedChanges()),money(req.committedCost()),money(req.actualCost()),
