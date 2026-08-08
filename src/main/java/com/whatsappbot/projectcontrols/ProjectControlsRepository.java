@@ -97,6 +97,13 @@ class ProjectControlsRepository {
         return count!=null&&count>0;
     }
 
+    boolean validParentLine(UUID parentLineId, UUID tenantId, UUID projectId, UUID versionId) {
+        if (parentLineId == null) return true;
+        Integer count=jdbc.queryForObject("select count(*) from budget_lines where id=? and tenant_id=? and project_id=? and budget_version_id=?",
+                Integer.class,parentLineId,tenantId,projectId,versionId);
+        return count!=null&&count>0;
+    }
+
     void insertBudgetLine(UUID id, UUID tenantId, UUID projectId, UUID versionId, UUID parentLineId, String costCode, String name,
                           BigDecimal original, BigDecimal changes, BigDecimal committed, BigDecimal actual, BigDecimal etc, int sortOrder) {
         jdbc.update("""
