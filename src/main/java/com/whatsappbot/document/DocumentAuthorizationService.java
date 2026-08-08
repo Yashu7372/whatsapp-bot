@@ -1,6 +1,7 @@
 package com.whatsappbot.document;
 
 import com.whatsappbot.auth.TenantUserEntity;
+import com.whatsappbot.auth.UserRole;
 import com.whatsappbot.project.ProjectAccessService;
 import com.whatsappbot.project.ProjectAuthorizationService;
 import com.whatsappbot.project.ProjectPermission;
@@ -39,10 +40,6 @@ public class DocumentAuthorizationService {
         evaluate(tenantId, userId, documentId, ISSUE, true);
     }
 
-    /**
-     * Approval requires both document visibility and the project-side authority to approve.
-     * The existing workflow service then applies the narrower named-reviewer/current-step check.
-     */
     @Transactional(readOnly = true)
     public void requireApprovalDecision(UUID tenantId, UUID userId, UUID approvalId) {
         UUID documentId=repository.documentIdForApproval(tenantId,approvalId);
@@ -71,8 +68,10 @@ public class DocumentAuthorizationService {
 
         TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
         if (security.projectId() == null) {
+            if (!mutation) return; // preserves the existing tenant-document model for non-project content
             if (accessService.isTenantAdministrator(actor)) return;
-            if (repository.hasGrant(tenantId, documentId, actor.getId(), actor.getOrganizationId(), actor.getRole().name(), grantPermission)) return;
+            boolean manager = actor.getRole()== UserRole.ADMIN || actor.getRole()==UserRole.MANAGER;
+            if (manager || repository.hasGrant(tenantId, documentId, actor.getId(), actor.getOrganizationId(), actor.getRole().name(), grantPermission)) return;
             throw denied(documentId);
         }
 
