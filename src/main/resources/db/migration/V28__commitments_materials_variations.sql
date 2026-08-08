@@ -3,15 +3,24 @@
 -- Batch 3 builds on project controls and resource actual costs.
 -- =====================================================================
 
--- Preserve any pre-Batch-3 values already held directly on budget lines.
--- New commercial facts are additive to these baselines rather than replacing them.
+-- Preserve values that pre-date the new Batch-3 fact tables. V27 may already have
+-- rolled resource actual_cost_entries into budget_lines.actual_cost, so subtract
+-- those detail facts when deriving the direct/manual baseline to avoid counting
+-- the same resource actuals again when the V28 refresh function is installed.
 ALTER TABLE budget_lines ADD COLUMN baseline_committed_cost NUMERIC(18,2) NOT NULL DEFAULT 0;
 ALTER TABLE budget_lines ADD COLUMN baseline_actual_cost NUMERIC(18,2) NOT NULL DEFAULT 0;
 ALTER TABLE budget_lines ADD COLUMN baseline_approved_changes NUMERIC(18,2) NOT NULL DEFAULT 0;
-UPDATE budget_lines
-   SET baseline_committed_cost = committed_cost,
-       baseline_actual_cost = actual_cost,
-       baseline_approved_changes = approved_changes;
+UPDATE budget_lines b
+   SET baseline_committed_cost = b.committed_cost,
+       baseline_actual_cost = GREATEST(
+           b.actual_cost - COALESCE((
+               SELECT SUM(a.amount)
+                 FROM actual_cost_entries a
+                WHERE a.budget_line_id = b.id
+           ), 0),
+           0
+       ),
+       baseline_approved_changes = b.approved_changes;
 
 CREATE TABLE project_commitments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -122,8 +131,8 @@ CREATE TRIGGER project_commitments_budget_refresh
 AFTER INSERT OR UPDATE OR DELETE ON project_commitments
 FOR EACH ROW EXECUTE FUNCTION trg_refresh_commitment_budget();
 
--- Replace the Batch-2 function used by its existing actual-cost trigger so later
--- timesheet/equipment updates continue to include Batch-3 accepted materials.
+-- Replace the Batch-2 INSERT-only rollup with a recomputation function so later
+-- timesheet/equipment facts and Batch-3 accepted materials share one source-safe total.
 CREATE OR REPLACE FUNCTION refresh_budget_line_actual(p_budget_line UUID) RETURNS VOID AS $$
 BEGIN
     IF p_budget_line IS NULL THEN RETURN; END IF;
@@ -133,6 +142,13 @@ BEGIN
          + COALESCE((SELECT SUM(m.amount) FROM material_receipts m WHERE m.budget_line_id = p_budget_line AND m.status='ACCEPTED'),0),
            updated_at = NOW()
      WHERE b.id = p_budget_line;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE OR REPLACE FUNCTION apply_actual_cost_to_budget_line() RETURNS TRIGGER AS $$
+BEGIN
+    PERFORM refresh_budget_line_actual(NEW.budget_line_id);
+    RETURN NEW;
 END;
 $$ LANGUAGE plpgsql;
 
