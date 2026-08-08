@@ -44,7 +44,7 @@ class DocumentAuthorizationRepository {
                   from document_approval_steps s
                   join document_approvals a on a.id=s.approval_id
                  where a.tenant_id=? and a.document_id=? and a.status='PENDING'
-                   and s.status='PENDING' and lower(s.reviewer_email)=lower(?)
+                   and s.decision is null and lower(s.reviewer_email)=lower(?)
                 """, Integer.class, tenantId, documentId, reviewerEmail);
         return count != null && count > 0;
     }
