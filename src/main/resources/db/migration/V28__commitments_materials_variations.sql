@@ -3,19 +3,29 @@
 -- Batch 3 builds on project controls and resource actual costs.
 -- =====================================================================
 
+-- Preserve any pre-Batch-3 values already held directly on budget lines.
+-- New commercial facts are additive to these baselines rather than replacing them.
+ALTER TABLE budget_lines ADD COLUMN baseline_committed_cost NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE budget_lines ADD COLUMN baseline_actual_cost NUMERIC(18,2) NOT NULL DEFAULT 0;
+ALTER TABLE budget_lines ADD COLUMN baseline_approved_changes NUMERIC(18,2) NOT NULL DEFAULT 0;
+UPDATE budget_lines
+   SET baseline_committed_cost = committed_cost,
+       baseline_actual_cost = actual_cost,
+       baseline_approved_changes = approved_changes;
+
 CREATE TABLE project_commitments (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     tenant_id UUID NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
     project_id UUID NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
     organization_id UUID NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     budget_line_id UUID REFERENCES budget_lines(id) ON DELETE SET NULL,
-    commitment_type VARCHAR(30) NOT NULL, -- PURCHASE_ORDER | SUBCONTRACT | OTHER
+    commitment_type VARCHAR(30) NOT NULL,
     reference_no VARCHAR(100) NOT NULL,
     description VARCHAR(500),
     original_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
     approved_changes NUMERIC(18,2) NOT NULL DEFAULT 0,
     currency VARCHAR(10) NOT NULL DEFAULT 'AED',
-    status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE', -- DRAFT | ACTIVE | CLOSED | CANCELLED
+    status VARCHAR(30) NOT NULL DEFAULT 'ACTIVE',
     start_date DATE,
     end_date DATE,
     created_by UUID REFERENCES tenant_users(id) ON DELETE SET NULL,
@@ -44,7 +54,7 @@ CREATE TABLE material_receipts (
     unit_cost NUMERIC(18,2) NOT NULL DEFAULT 0,
     amount NUMERIC(18,2) NOT NULL DEFAULT 0,
     currency VARCHAR(10) NOT NULL DEFAULT 'AED',
-    status VARCHAR(30) NOT NULL DEFAULT 'ACCEPTED', -- RECEIVED | ACCEPTED | REJECTED
+    status VARCHAR(30) NOT NULL DEFAULT 'ACCEPTED',
     document_id UUID REFERENCES documents(id) ON DELETE SET NULL,
     created_by UUID REFERENCES tenant_users(id) ON DELETE SET NULL,
     created_at TIMESTAMP NOT NULL DEFAULT NOW(),
@@ -63,12 +73,12 @@ CREATE TABLE project_variations (
     variation_ref VARCHAR(100) NOT NULL,
     title VARCHAR(300) NOT NULL,
     description TEXT,
-    source_type VARCHAR(40), -- SITE_INSTRUCTION | RFI | DESIGN_CHANGE | CLIENT_CHANGE | OTHER
+    source_type VARCHAR(40),
     source_document_id UUID REFERENCES documents(id) ON DELETE SET NULL,
     requested_amount NUMERIC(18,2) NOT NULL DEFAULT 0,
     approved_amount NUMERIC(18,2),
     currency VARCHAR(10) NOT NULL DEFAULT 'AED',
-    status VARCHAR(30) NOT NULL DEFAULT 'PROPOSED', -- PROPOSED | UNDER_REVIEW | APPROVED | REJECTED | CANCELLED
+    status VARCHAR(30) NOT NULL DEFAULT 'PROPOSED',
     submitted_at TIMESTAMP,
     approved_at TIMESTAMP,
     approved_by UUID REFERENCES tenant_users(id) ON DELETE SET NULL,
@@ -82,13 +92,11 @@ CREATE TABLE project_variations (
 CREATE INDEX idx_variations_project_status ON project_variations(project_id, status);
 CREATE INDEX idx_variations_budget_line ON project_variations(budget_line_id);
 
--- Keep V26 budget-line totals synchronized with the new Batch 3 facts.
--- Commitment current value contributes to committed_cost only while ACTIVE.
 CREATE OR REPLACE FUNCTION refresh_budget_line_commitment(p_budget_line UUID) RETURNS VOID AS $$
 BEGIN
     IF p_budget_line IS NULL THEN RETURN; END IF;
     UPDATE budget_lines b
-       SET committed_cost = COALESCE((
+       SET committed_cost = b.baseline_committed_cost + COALESCE((
            SELECT SUM(c.original_amount + c.approved_changes)
              FROM project_commitments c
             WHERE c.budget_line_id = p_budget_line AND c.status = 'ACTIVE'
@@ -98,12 +106,15 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION trg_refresh_commitment_budget() RETURNS TRIGGER AS $$
+DECLARE
+    target_line UUID;
 BEGIN
-    PERFORM refresh_budget_line_commitment(COALESCE(NEW.budget_line_id, OLD.budget_line_id));
+    target_line := CASE WHEN TG_OP = 'DELETE' THEN OLD.budget_line_id ELSE NEW.budget_line_id END;
+    PERFORM refresh_budget_line_commitment(target_line);
     IF TG_OP = 'UPDATE' AND OLD.budget_line_id IS DISTINCT FROM NEW.budget_line_id THEN
         PERFORM refresh_budget_line_commitment(OLD.budget_line_id);
     END IF;
-    RETURN COALESCE(NEW, OLD);
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -111,13 +122,14 @@ CREATE TRIGGER project_commitments_budget_refresh
 AFTER INSERT OR UPDATE OR DELETE ON project_commitments
 FOR EACH ROW EXECUTE FUNCTION trg_refresh_commitment_budget();
 
--- Accepted material receipts become actual-cost facts. This is additive to labour/equipment actuals.
-CREATE OR REPLACE FUNCTION refresh_budget_line_actual_from_facts(p_budget_line UUID) RETURNS VOID AS $$
+-- Replace the Batch-2 function used by its existing actual-cost trigger so later
+-- timesheet/equipment updates continue to include Batch-3 accepted materials.
+CREATE OR REPLACE FUNCTION refresh_budget_line_actual(p_budget_line UUID) RETURNS VOID AS $$
 BEGIN
     IF p_budget_line IS NULL THEN RETURN; END IF;
     UPDATE budget_lines b
-       SET actual_cost =
-           COALESCE((SELECT SUM(a.amount) FROM actual_cost_entries a WHERE a.budget_line_id = p_budget_line),0)
+       SET actual_cost = b.baseline_actual_cost
+         + COALESCE((SELECT SUM(a.amount) FROM actual_cost_entries a WHERE a.budget_line_id = p_budget_line),0)
          + COALESCE((SELECT SUM(m.amount) FROM material_receipts m WHERE m.budget_line_id = p_budget_line AND m.status='ACCEPTED'),0),
            updated_at = NOW()
      WHERE b.id = p_budget_line;
@@ -125,12 +137,15 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION trg_refresh_material_actual() RETURNS TRIGGER AS $$
+DECLARE
+    target_line UUID;
 BEGIN
-    PERFORM refresh_budget_line_actual_from_facts(COALESCE(NEW.budget_line_id, OLD.budget_line_id));
+    target_line := CASE WHEN TG_OP = 'DELETE' THEN OLD.budget_line_id ELSE NEW.budget_line_id END;
+    PERFORM refresh_budget_line_actual(target_line);
     IF TG_OP = 'UPDATE' AND OLD.budget_line_id IS DISTINCT FROM NEW.budget_line_id THEN
-        PERFORM refresh_budget_line_actual_from_facts(OLD.budget_line_id);
+        PERFORM refresh_budget_line_actual(OLD.budget_line_id);
     END IF;
-    RETURN COALESCE(NEW, OLD);
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$ LANGUAGE plpgsql;
 
@@ -138,12 +153,11 @@ CREATE TRIGGER material_receipts_actual_refresh
 AFTER INSERT OR UPDATE OR DELETE ON material_receipts
 FOR EACH ROW EXECUTE FUNCTION trg_refresh_material_actual();
 
--- Approved variations expand the budget baseline on their allocated cost code.
 CREATE OR REPLACE FUNCTION refresh_budget_line_variations(p_budget_line UUID) RETURNS VOID AS $$
 BEGIN
     IF p_budget_line IS NULL THEN RETURN; END IF;
     UPDATE budget_lines b
-       SET approved_changes = COALESCE((
+       SET approved_changes = b.baseline_approved_changes + COALESCE((
            SELECT SUM(v.approved_amount)
              FROM project_variations v
             WHERE v.budget_line_id = p_budget_line AND v.status='APPROVED'
@@ -153,12 +167,15 @@ END;
 $$ LANGUAGE plpgsql;
 
 CREATE OR REPLACE FUNCTION trg_refresh_variation_budget() RETURNS TRIGGER AS $$
+DECLARE
+    target_line UUID;
 BEGIN
-    PERFORM refresh_budget_line_variations(COALESCE(NEW.budget_line_id, OLD.budget_line_id));
+    target_line := CASE WHEN TG_OP = 'DELETE' THEN OLD.budget_line_id ELSE NEW.budget_line_id END;
+    PERFORM refresh_budget_line_variations(target_line);
     IF TG_OP = 'UPDATE' AND OLD.budget_line_id IS DISTINCT FROM NEW.budget_line_id THEN
         PERFORM refresh_budget_line_variations(OLD.budget_line_id);
     END IF;
-    RETURN COALESCE(NEW, OLD);
+    RETURN CASE WHEN TG_OP = 'DELETE' THEN OLD ELSE NEW END;
 END;
 $$ LANGUAGE plpgsql;
 
