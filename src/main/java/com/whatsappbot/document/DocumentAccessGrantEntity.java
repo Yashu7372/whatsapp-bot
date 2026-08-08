@@ -32,6 +32,9 @@ public class DocumentAccessGrantEntity {
     @JoinColumn(name = "user_id")
     private TenantUserEntity user;
 
+    @Column(name = "organization_id")
+    private UUID organizationId;
+
     @Column(name = "role_code", length = 100)
     private String roleCode;
 
