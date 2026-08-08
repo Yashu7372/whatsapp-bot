@@ -50,7 +50,7 @@ ai:
   memory-max-messages: ${AI_MEMORY_MAX_MESSAGES:20}
   gemini:
     api-key: ${AI_GEMINI_API_KEY:}
-    model-name: ${AI_GEMINI_MODEL:gemini-2.5-flash}
+    model-name: ${AI_GEMINI_MODEL:gemini-3.5-flash}
   ollama:
     base-url: ${AI_OLLAMA_BASE_URL:http://localhost:11434}
     model-name: ${AI_OLLAMA_MODEL:llama3.1:8b}

@@ -267,7 +267,7 @@ All `/api/v1/crm/*` and `/api/v1/*` endpoints (except webhook) require a JWT Bea
 | `WHATSAPP_ACCESS_TOKEN` | Yes | Fallback Graph API bearer (per-tenant preferred) |
 | `AI_PROVIDER` | Yes | `GEMINI` / `OLLAMA` / `OPENAI` / `ANTHROPIC` |
 | `AI_GEMINI_API_KEY` | If Gemini | Google AI Studio key |
-| `AI_GEMINI_MODEL` | No | Default: `gemini-2.5-flash` |
+| `AI_GEMINI_MODEL` | No | Default: `gemini-3.5-flash` |
 | `AI_OLLAMA_BASE_URL` | If Ollama | Default: `http://localhost:11434` |
 | `AI_OPENAI_API_KEY` | If OpenAI | — |
 | `AI_ANTHROPIC_API_KEY` | If Anthropic | — |

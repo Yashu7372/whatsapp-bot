@@ -22,7 +22,7 @@ a product others depend on — not a script, not a prototype.
 |---|---|
 | Language / runtime | Java 21 (virtual threads enabled) |
 | Framework | Spring Boot 3.3.6 |
-| AI / LLM | LangChain4j 1.0.0, Vertex AI Gemini (`gemini-2.5-flash`) |
+| AI / LLM | LangChain4j 1.0.0, Vertex AI Gemini (`gemini-3.5-flash`) |
 | Embeddings | `all-MiniLM-L6-v2` (384-dim, English-only, local) |
 | Vector search | pgvector on Cloud SQL Postgres 15 |
 | Schema migrations | Flyway (validate-only at boot, never `ddl-auto: create`) |
@@ -234,7 +234,7 @@ All schema changes live in `src/main/resources/db/migration/`.
 | `WHATSAPP_ACCESS_TOKEN` | Fallback Graph API bearer token (per-tenant token preferred) |
 | `GCP_PROJECT_ID` | Gemini Vertex AI project |
 | `GEMINI_REGION` | Vertex AI region (e.g. `us-central1`) |
-| `GEMINI_MODEL` | Gemini model name (default: `gemini-2.5-flash`) |
+| `GEMINI_MODEL` | Gemini model name (default: `gemini-3.5-flash`) |
 
 Optional / defaults:
 

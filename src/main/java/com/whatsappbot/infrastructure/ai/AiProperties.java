@@ -98,7 +98,7 @@ public class AiProperties {
     /** Gemini direct API (ai.google.dev) — free tier, API-key auth, NOT Vertex AI. */
     public static class Gemini {
         private String apiKey;
-        private String modelName = "gemini-2.5-flash";
+        private String modelName = "gemini-3.5-flash";
 
         public String getApiKey() {
             return apiKey;
