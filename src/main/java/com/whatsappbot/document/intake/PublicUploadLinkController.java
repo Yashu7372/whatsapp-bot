@@ -14,8 +14,7 @@ import java.io.UncheckedIOException;
 /**
  * Unauthenticated by design — this is how a customer with no account submits a document. Every
  * method is scoped strictly by the link's own token or the session token issued after it; nothing
- * here ever trusts a tenant, project or document id supplied by the caller. Carved out of the JWT
- * filter's coverage in {@code SecurityConfig} the same way the WhatsApp webhook is.
+ * here ever trusts a tenant, project or document id supplied by the caller.
  */
 @RestController
 @RequestMapping("/api/v1/public/upload-links")
@@ -66,11 +65,12 @@ public class PublicUploadLinkController {
         return authHeader.substring(7);
     }
 
+    /**
+     * Use the servlet peer address for security throttling. X-Forwarded-For is caller-controlled
+     * unless the deployment has an explicitly trusted proxy strategy, so trusting it here would
+     * let an attacker rotate spoofed addresses and bypass password throttling.
+     */
     private String clientIp(HttpServletRequest request) {
-        String forwarded = request.getHeader("X-Forwarded-For");
-        if (forwarded != null && !forwarded.isBlank()) {
-            return forwarded.split(",")[0].trim();
-        }
         return request.getRemoteAddr();
     }
 
