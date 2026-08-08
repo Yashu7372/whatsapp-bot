@@ -52,8 +52,6 @@ public class UploadLinkService {
     private final PasswordEncoder passwordEncoder;
     private final DocumentIntakeService documentIntakeService;
 
-    // ── Agent-side management ───────────────────────────────────────────────
-
     public record CreateRequest(UUID projectId, String docType, String label, String password,
                                 LocalDateTime expiresAt, Integer maxUploads) {}
 
@@ -67,6 +65,9 @@ public class UploadLinkService {
         }
         if (req.expiresAt() == null || !req.expiresAt().isAfter(LocalDateTime.now())) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "expiresAt is required and must be in the future");
+        }
+        if (req.maxUploads() != null && req.maxUploads() < 1) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "maxUploads must be at least 1");
         }
 
         TenantEntity tenant = tenantRepository.findById(tenantId)
@@ -101,8 +102,6 @@ public class UploadLinkService {
         linkRepository.save(link);
     }
 
-    // ── Public flow ──────────────────────────────────────────────────────
-
     public record LinkMetadata(String label, boolean requiresPassword) {}
 
     @Transactional
@@ -112,18 +111,18 @@ public class UploadLinkService {
         return new LinkMetadata(link.getLabel(), link.requiresPassword());
     }
 
-    /** Rate-limited. Issues a session token whether or not a password is required. */
+    /** Password failures are throttled per link and client address, not globally for the link. */
     @Transactional
     public String startSession(String token, String password, String ipAddress) {
         DocumentUploadLinkEntity link = requireUsableLink(token);
 
         if (link.requiresPassword()) {
             LocalDateTime window = LocalDateTime.now().minusMinutes(properties.getPasswordLockoutMinutes());
-            long recentFailures = eventRepository.countByLinkIdAndEventTypeAndCreatedAtAfter(
-                    link.getId(), EVENT_PASSWORD_FAILED, window);
+            long recentFailures = eventRepository.countByLinkIdAndEventTypeAndIpAddressAndCreatedAtAfter(
+                    link.getId(), EVENT_PASSWORD_FAILED, ipAddress, window);
             if (recentFailures >= properties.getMaxPasswordAttempts()) {
                 throw new ResponseStatusException(HttpStatus.TOO_MANY_REQUESTS,
-                        "Too many incorrect attempts. Try again later.");
+                        "Too many incorrect attempts from this client. Try again later.");
             }
             if (password == null || !passwordEncoder.matches(password, link.getPasswordHash())) {
                 recordEvent(link, EVENT_PASSWORD_FAILED, null, null, ipAddress, null);
@@ -145,13 +144,18 @@ public class UploadLinkService {
                                  InputStream data, String uploaderName, String uploaderEmail, String ipAddress) {
         DocumentUploadLinkSessionEntity session = sessionRepository.findByToken(sessionToken)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Session is invalid or expired"));
-        if (session.isExpired()) {
+        LocalDateTime now = LocalDateTime.now();
+        if (session.isExpired() || sessionRepository.consumeValid(sessionToken, now) != 1) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, "Session is invalid or expired");
         }
 
         DocumentUploadLinkEntity link = linkRepository.findById(session.getLinkId())
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Upload link not found"));
-        if (!link.isUsable()) {
+
+        // Reserve capacity before any expensive scan/storage work. This UPDATE is atomic, so two
+        // concurrent requests cannot both consume the final slot. If ingestion fails, the enclosing
+        // transaction rolls the reservation and one-use session consumption back together.
+        if (linkRepository.tryReserveUploadSlot(link.getId()) != 1) {
             recordEvent(link, EVENT_EXPIRED_ATTEMPT, uploaderName, uploaderEmail, ipAddress, null);
             throw new ResponseStatusException(HttpStatus.GONE, "This upload link is no longer active");
         }
@@ -162,7 +166,6 @@ public class UploadLinkService {
                     originalFileName, null, uploaderName, uploaderEmail, link.getId());
             DocumentEntity doc = documentIntakeService.ingest(request, originalFileName, contentType, data);
 
-            linkRepository.incrementUploadCount(link.getId());
             recordEvent(link, EVENT_UPLOADED, uploaderName, uploaderEmail, ipAddress, doc.getId());
             log.info("Document received via upload link. linkId={} documentId={}", link.getId(), doc.getId());
             return doc;
@@ -172,12 +175,8 @@ public class UploadLinkService {
         }
     }
 
-    // ── Shared helpers ───────────────────────────────────────────────────
-
     private DocumentUploadLinkEntity requireUsableLink(String token) {
         DocumentUploadLinkEntity link = linkRepository.findByToken(token).orElse(null);
-        // Unknown, expired and revoked all answer identically — a token guesser learns nothing
-        // about which case they hit.
         if (link == null || !link.isUsable()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "This upload link is not available");
         }
