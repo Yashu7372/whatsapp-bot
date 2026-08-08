@@ -53,9 +53,13 @@ class ProjectControlsRepository {
             """,id,tenantId,projectId,participantId,ref,model,original,changes,currency,start,end,status);
     }
 
-    UUID latestBudgetVersionId(UUID tenantId, UUID projectId) {
-        return jdbc.query("select id from budget_versions where tenant_id=? and project_id=? order by case when status='APPROVED' then 0 else 1 end, version_no desc limit 1",
-                rs->rs.next()?rs.getObject(1,UUID.class):null,tenantId,projectId);
+    UUID latestBudgetVersionId(UUID tenantId, UUID projectId, UUID organizationId) {
+        if(organizationId==null){
+            return jdbc.query("select id from budget_versions where tenant_id=? and project_id=? and organization_id is null order by case when status='APPROVED' then 0 else 1 end, version_no desc limit 1",
+                    rs->rs.next()?rs.getObject(1,UUID.class):null,tenantId,projectId);
+        }
+        return jdbc.query("select id from budget_versions where tenant_id=? and project_id=? and organization_id=? order by case when status='APPROVED' then 0 else 1 end, version_no desc limit 1",
+                rs->rs.next()?rs.getObject(1,UUID.class):null,tenantId,projectId,organizationId);
     }
 
     ProjectControlsService.BudgetHeader budgetHeader(UUID versionId) {
@@ -72,28 +76,41 @@ class ProjectControlsRepository {
                 rs.getBigDecimal(8),rs.getBigDecimal(9),rs.getBigDecimal(8).add(rs.getBigDecimal(9)),rs.getInt(10)),tenantId,projectId,versionId);
     }
 
-    ProjectControlsService.BudgetTotals latestBudgetTotals(UUID tenantId, UUID projectId) {
+    ProjectControlsService.BudgetTotals latestBudgetTotals(UUID tenantId, UUID projectId, UUID organizationId) {
+        String orgClause=organizationId==null?"organization_id is null":"organization_id=?";
+        Object[] args=organizationId==null?new Object[]{tenantId,projectId}:new Object[]{tenantId,projectId,organizationId};
         return jdbc.query("""
-            with v as (select id from budget_versions where tenant_id=? and project_id=? order by case when status='APPROVED' then 0 else 1 end,version_no desc limit 1)
+            with v as (select id from budget_versions where tenant_id=? and project_id=? and %s
+                       order by case when status='APPROVED' then 0 else 1 end,version_no desc limit 1)
             select coalesce(sum(b.original_budget+b.approved_changes),0),coalesce(sum(b.committed_cost),0),coalesce(sum(b.actual_cost),0),coalesce(sum(b.estimate_to_complete),0)
             from budget_lines b where b.budget_version_id=(select id from v)
               and not exists(select 1 from budget_lines child where child.parent_line_id=b.id)
-            """,rs->rs.next()?new ProjectControlsService.BudgetTotals(rs.getBigDecimal(1),rs.getBigDecimal(2),rs.getBigDecimal(3),rs.getBigDecimal(4))
-                :new ProjectControlsService.BudgetTotals(BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO),tenantId,projectId);
+            """.formatted(orgClause),rs->rs.next()?new ProjectControlsService.BudgetTotals(rs.getBigDecimal(1),rs.getBigDecimal(2),rs.getBigDecimal(3),rs.getBigDecimal(4))
+                :new ProjectControlsService.BudgetTotals(BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO,BigDecimal.ZERO),args);
     }
 
-    int nextBudgetVersion(UUID tenantId, UUID projectId) {
-        Integer next=jdbc.queryForObject("select coalesce(max(version_no),0)+1 from budget_versions where tenant_id=? and project_id=?",Integer.class,tenantId,projectId);
+    int nextBudgetVersion(UUID tenantId, UUID projectId, UUID organizationId) {
+        Integer next;
+        if(organizationId==null){
+            next=jdbc.queryForObject("select coalesce(max(version_no),0)+1 from budget_versions where tenant_id=? and project_id=? and organization_id is null",Integer.class,tenantId,projectId);
+        }else{
+            next=jdbc.queryForObject("select coalesce(max(version_no),0)+1 from budget_versions where tenant_id=? and project_id=? and organization_id=?",Integer.class,tenantId,projectId,organizationId);
+        }
         return next==null?1:next;
     }
 
-    void insertBudgetVersion(UUID id, UUID tenantId, UUID projectId, int version, String label, String status, LocalDate effectiveDate, UUID createdBy) {
-        jdbc.update("insert into budget_versions(id,tenant_id,project_id,version_no,label,status,effective_date,created_by) values(?,?,?,?,?,?,?,?)",
-                id,tenantId,projectId,version,label,status,effectiveDate,createdBy);
+    void insertBudgetVersion(UUID id, UUID tenantId, UUID projectId, UUID organizationId, int version, String label, String status, LocalDate effectiveDate, UUID createdBy) {
+        jdbc.update("insert into budget_versions(id,tenant_id,project_id,organization_id,version_no,label,status,effective_date,created_by) values(?,?,?,?,?,?,?,?,?)",
+                id,tenantId,projectId,organizationId,version,label,status,effectiveDate,createdBy);
     }
 
-    boolean budgetVersionExists(UUID versionId, UUID tenantId, UUID projectId) {
-        Integer count=jdbc.queryForObject("select count(*) from budget_versions where id=? and tenant_id=? and project_id=?",Integer.class,versionId,tenantId,projectId);
+    boolean budgetVersionExists(UUID versionId, UUID tenantId, UUID projectId, UUID organizationId) {
+        Integer count;
+        if(organizationId==null){
+            count=jdbc.queryForObject("select count(*) from budget_versions where id=? and tenant_id=? and project_id=? and organization_id is null",Integer.class,versionId,tenantId,projectId);
+        }else{
+            count=jdbc.queryForObject("select count(*) from budget_versions where id=? and tenant_id=? and project_id=? and organization_id=?",Integer.class,versionId,tenantId,projectId,organizationId);
+        }
         return count!=null&&count>0;
     }
 
