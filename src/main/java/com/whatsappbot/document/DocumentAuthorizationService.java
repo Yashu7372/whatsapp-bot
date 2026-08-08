@@ -12,6 +12,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.util.List;
+import java.util.Map;
 import java.util.UUID;
 
 /** Applies project participation, organization ownership, classification, grants and workflow assignment. */
@@ -21,6 +23,19 @@ public class DocumentAuthorizationService {
     public static final String VIEW = "VIEW";
     public static final String EDIT = "EDIT";
     public static final String ISSUE = "ISSUE";
+    /** Administers classification and grants. Strictly stronger than EDIT. */
+    public static final String MANAGE = "MANAGE";
+
+    /**
+     * Which stored grant codes satisfy a requested permission. A grant of EDIT necessarily implies
+     * the holder may read what they are editing; without this the holder of an EDIT-only grant
+     * could PATCH a restricted document but was refused when fetching it.
+     */
+    private static final Map<String, List<String>> IMPLYING_GRANTS = Map.of(
+            VIEW, List.of(VIEW, EDIT, ISSUE, MANAGE),
+            EDIT, List.of(EDIT, MANAGE),
+            ISSUE, List.of(ISSUE, MANAGE),
+            MANAGE, List.of(MANAGE));
 
     private final DocumentAuthorizationRepository repository;
     private final ProjectAccessService accessService;
@@ -32,6 +47,34 @@ public class DocumentAuthorizationService {
     public void requireEdit(UUID tenantId, UUID userId, UUID documentId) { evaluate(tenantId,userId,documentId,EDIT,true); }
     @Transactional(readOnly = true)
     public void requireIssue(UUID tenantId, UUID userId, UUID documentId) { evaluate(tenantId,userId,documentId,ISSUE,true); }
+
+    /**
+     * Gate for changing security classification and administering grants.
+     *
+     * <p>Content authority is not security authority. The holder of an EDIT grant on a RESTRICTED
+     * document could previously declassify it to PROJECT — exposing it to every project
+     * participant — or grant itself ISSUE. Both now require being the originating company acting
+     * through a manager, a tenant administrator, or an explicit MANAGE grant.
+     */
+    @Transactional(readOnly = true)
+    public void requireSecurityAdministration(UUID tenantId, UUID userId, UUID documentId) {
+        DocumentAuthorizationRepository.DocumentSecurity security = repository.security(tenantId, documentId);
+        if (security == null) throw new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found: " + documentId);
+
+        TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
+        if (accessService.isTenantAdministrator(actor)) return;
+
+        if (security.projectId() != null) {
+            projectAuthorization.require(tenantId, userId, security.projectId(), ProjectPermission.DOCUMENT_SECURITY_ADMIN);
+        } else if (actor.getRole() != UserRole.ADMIN && actor.getRole() != UserRole.MANAGER) {
+            throw securityDenied(documentId);
+        }
+
+        boolean originator = actor.getOrganizationId() != null
+                && actor.getOrganizationId().equals(security.originatorOrganizationId());
+        if (originator || hasGrant(tenantId, documentId, actor, MANAGE)) return;
+        throw securityDenied(documentId);
+    }
 
     /** Enforces the current workflow step's contractual authority before DocumentService mutates it. */
     @Transactional(readOnly = true)
@@ -73,12 +116,6 @@ public class DocumentAuthorizationService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,"Internal review belongs to the originating organization");
     }
 
-    @Transactional(readOnly = true)
-    public boolean canView(UUID tenantId, UUID userId, UUID documentId) {
-        try { requireView(tenantId,userId,documentId); return true; }
-        catch(ResponseStatusException ex){ if(ex.getStatusCode().value()==403||ex.getStatusCode().value()==404)return false; throw ex; }
-    }
-
     private void evaluate(UUID tenantId, UUID userId, UUID documentId, String grantPermission, boolean mutation) {
         DocumentAuthorizationRepository.DocumentSecurity security=repository.security(tenantId,documentId);
         if(security==null) throw new ResponseStatusException(HttpStatus.NOT_FOUND,"Document not found: "+documentId);
@@ -87,7 +124,7 @@ public class DocumentAuthorizationService {
             if(!mutation) return;
             if(accessService.isTenantAdministrator(actor)) return;
             boolean manager=actor.getRole()==UserRole.ADMIN||actor.getRole()==UserRole.MANAGER;
-            if(manager||repository.hasGrant(tenantId,documentId,actor.getId(),actor.getOrganizationId(),actor.getRole().name(),grantPermission))return;
+            if(manager||hasGrant(tenantId,documentId,actor,grantPermission))return;
             throw denied(documentId);
         }
         ProjectPermission projectPermission=mutation
@@ -96,17 +133,26 @@ public class DocumentAuthorizationService {
         projectAuthorization.require(tenantId,userId,security.projectId(),projectPermission);
         if(accessService.isTenantAdministrator(actor)) return;
         boolean owner=actor.getOrganizationId()!=null&&actor.getOrganizationId().equals(security.originatorOrganizationId());
-        boolean explicit=repository.hasGrant(tenantId,documentId,actor.getId(),actor.getOrganizationId(),actor.getRole().name(),grantPermission);
+        boolean explicit=hasGrant(tenantId,documentId,actor,grantPermission);
         boolean assigned=!mutation&&repository.assignedToApproval(tenantId,documentId,actor.getEmail());
-        String classification=security.classification()==null?"PROJECT":security.classification();
-        boolean allowed=switch(classification){
-            case "PROJECT" -> !mutation||owner||explicit;
-            case "ORGANIZATION" -> owner||explicit||assigned;
-            case "RESTRICTED" -> explicit||assigned;
-            default -> false;
+        String classification=security.classification()==null?DocumentClassification.PROJECT.name():security.classification();
+        boolean allowed=switch(DocumentClassification.of(classification,documentId)){
+            case PROJECT -> !mutation||owner||explicit;
+            case ORGANIZATION -> owner||explicit||assigned;
+            case RESTRICTED -> explicit||assigned;
         };
         if(!allowed) throw denied(documentId);
     }
 
+    private boolean hasGrant(UUID tenantId, UUID documentId, TenantUserEntity actor, String permission) {
+        return repository.hasGrant(tenantId, documentId, actor.getId(), actor.getOrganizationId(),
+                actor.getRole().name(), IMPLYING_GRANTS.getOrDefault(permission, List.of(permission)));
+    }
+
     private static ResponseStatusException denied(UUID documentId){return new ResponseStatusException(HttpStatus.FORBIDDEN,"Document access denied by project/company/security policy: "+documentId);}
+
+    private static ResponseStatusException securityDenied(UUID documentId){
+        return new ResponseStatusException(HttpStatus.FORBIDDEN,
+                "Only the originating company, a tenant administrator or a MANAGE grant holder can administer document security: "+documentId);
+    }
 }

@@ -1,6 +1,7 @@
 package com.whatsappbot.config;
 
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -44,6 +45,20 @@ public class ApiExceptionHandler {
             log.warn("Request rejected: {} — {}", e.getStatusCode(), reason);
         }
         return ResponseEntity.status(e.getStatusCode()).body(Map.of(ERROR_FIELD, reason));
+    }
+
+    /**
+     * A unique or foreign key violation is the client asking for something the data model forbids —
+     * reusing a transmittal number, adding the same revision to a package twice — not a server
+     * fault. Left to the generic handler these surfaced as 500 "Internal server error", which told
+     * the dashboard nothing and looked like an outage.
+     */
+    @ExceptionHandler(DataIntegrityViolationException.class)
+    public ResponseEntity<Map<String, String>> handleConstraintViolation(DataIntegrityViolationException e) {
+        log.warn("Request rejected by a database constraint", e);
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(Map.of(ERROR_FIELD, "This conflicts with an existing record. "
+                        + "It may already exist, or it may reference something that does not."));
     }
 
     @ExceptionHandler(Exception.class)

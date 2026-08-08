@@ -29,12 +29,17 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class DocumentService {
+
+    /** Upper bound on a register page, so a caller cannot ask for the whole tenant in one request. */
+    private static final int MAX_PAGE_SIZE = 200;
 
     /** Decision values accepted from a reviewer, and the terminal approval statuses they map to. */
     private static final String DECISION_APPROVED = "APPROVED";
@@ -60,6 +65,7 @@ public class DocumentService {
     private final DocumentNumberService numberService;
     private final OrganizationRepository organizationRepository;
     private final ObjectMapper objectMapper;
+    private final DocumentAuthorizationRepository authorizationRepository;
 
     // ── Document CRUD ──────────────────────────────────────────────────────
 
@@ -92,6 +98,7 @@ public class DocumentService {
         version.setDocumentId(doc.getId());
         version.setTenant(tenant);
         version.setVersionNum(1);
+        version.setRevisionCode(revisionCodeFor(1));
         version.setCreatedBy(user);
 
         if (file != null && !file.isEmpty()) {
@@ -121,20 +128,37 @@ public class DocumentService {
      * project remain tenant-wide, which is how non-project document flows already worked.
      */
     @Transactional(readOnly = true)
-    public List<DocumentEntity> listDocuments(UUID tenantId, UUID userId, String docType) {
+    public DocumentPage listDocuments(UUID tenantId, UUID userId, String docType, int page, int size) {
         TenantUserEntity user = accessService.requireActiveUser(tenantId, userId);
+        String type = docType != null && !docType.isBlank() ? docType : null;
+        int pageSize = Math.max(1, Math.min(size, MAX_PAGE_SIZE));
+        int offset = Math.max(0, page) * pageSize;
 
-        List<DocumentEntity> documents = docType != null && !docType.isBlank()
-                ? documentRepository.findAllByTenantIdAndDocTypeOrderByUpdatedAtDesc(tenantId, docType)
-                : documentRepository.findAllByTenantIdOrderByUpdatedAtDesc(tenantId);
+        // One extra row answers "is there another page" without a second count query that would
+        // have to repeat — and could drift from — the visibility predicate.
+        List<UUID> ids = authorizationRepository.visibleDocumentIds(tenantId,
+                accessService.isTenantAdministrator(user), user.getId(), user.getOrganizationId(),
+                user.getRole().name(), user.getEmail(), type, pageSize + 1, offset);
 
-        if (accessService.isTenantAdministrator(user)) {
-            return documents;
+        boolean hasMore = ids.size() > pageSize;
+        List<UUID> pageIds = hasMore ? ids.subList(0, pageSize) : ids;
+        if (pageIds.isEmpty()) {
+            return new DocumentPage(List.of(), Math.max(0, page), pageSize, false);
         }
-        return documents.stream()
-                .filter(d -> d.getProjectId() == null
-                        || accessService.canSeeProject(tenantId, d.getProjectId(), user))
-                .toList();
+
+        // The id order from the visibility query is authoritative; findAllById does not preserve it.
+        Map<UUID, DocumentEntity> byId = documentRepository.findAllById(pageIds).stream()
+                .collect(Collectors.toMap(DocumentEntity::getId, d -> d));
+        List<DocumentEntity> documents = pageIds.stream().map(byId::get).filter(Objects::nonNull).toList();
+        return new DocumentPage(documents, Math.max(0, page), pageSize, hasMore);
+    }
+
+    /** A page of documents the caller is authorized to read. */
+    public record DocumentPage(List<DocumentEntity> documents, int page, int size, boolean hasMore) {}
+
+    /** Revision code derived from the version number, zero padded so codes sort lexically. */
+    private static String revisionCodeFor(int versionNum) {
+        return String.format("%02d", versionNum);
     }
 
     /** Read of a single document with the same project-participation check applied. */
@@ -175,6 +199,11 @@ public class DocumentService {
 
             int nextVersion = doc.getCurrentVersion() + 1;
             doc.setCurrentVersion(nextVersion);
+            // The register shows the revision code, so it has to advance with the version. It was
+            // previously written only when a revision was issued, leaving a document on version 5
+            // still displaying "Rev 01".
+            String nextRevisionCode = revisionCodeFor(nextVersion);
+            doc.setCurrentRevisionCode(nextRevisionCode);
 
             MediaAssetEntity asset = storeFile(tenantId, userId, file, docId);
 
@@ -182,6 +211,7 @@ public class DocumentService {
             version.setDocumentId(docId);
             version.setTenant(tenant);
             version.setVersionNum(nextVersion);
+            version.setRevisionCode(nextRevisionCode);
             version.setAssetId(asset.getId());
             version.setChangeNotes(req.changeNotes());
             version.setCreatedBy(user);

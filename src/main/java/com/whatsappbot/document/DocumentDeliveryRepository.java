@@ -43,6 +43,11 @@ class DocumentDeliveryRepository {
                 """,purpose,actorId,tenantId,documentId,versionId);
     }
 
+    String documentStatus(UUID tenantId,UUID documentId){
+        return jdbc.query("select status from documents where tenant_id=? and id=?",
+                rs->rs.next()?rs.getString(1):null,tenantId,documentId);
+    }
+
     boolean activeProjectOrganization(UUID tenantId, UUID projectId, UUID organizationId) {
         Integer n=jdbc.queryForObject("select count(*) from project_participants where tenant_id=? and project_id=? and organization_id=? and active=true",Integer.class,tenantId,projectId,organizationId);
         return n!=null&&n>0;
@@ -53,13 +58,22 @@ class DocumentDeliveryRepository {
     }
     TransmittalOwner transmittalOwner(UUID tenantId,UUID transmittalId){return jdbc.query("select project_id,sender_organization_id,status from document_transmittals where tenant_id=? and id=?",rs->rs.next()?new TransmittalOwner(rs.getObject(1,UUID.class),rs.getObject(2,UUID.class),rs.getString(3)):null,tenantId,transmittalId);}
     boolean revisionBelongsToProject(UUID tenantId,UUID projectId,UUID documentId,UUID versionId){Integer n=jdbc.queryForObject("select count(*) from documents d join document_versions v on v.document_id=d.id where d.tenant_id=? and d.project_id=? and d.id=? and v.id=? and v.issue_status='ISSUED'",Integer.class,tenantId,projectId,documentId,versionId);return n!=null&&n>0;}
-    void addItem(UUID tenantId,UUID transmittalId,UUID documentId,UUID versionId){jdbc.update("insert into document_transmittal_items(tenant_id,transmittal_id,document_id,document_version_id) values(?,?,?,?)",tenantId,transmittalId,documentId,versionId);}
+    void addItem(UUID tenantId,UUID transmittalId,UUID documentId,UUID versionId){jdbc.update("insert into document_transmittal_items(tenant_id,transmittal_id,document_id,document_version_id) values(?,?,?,?) on conflict do nothing",tenantId,transmittalId,documentId,versionId);}
     void addRecipient(UUID tenantId,UUID transmittalId,UUID organizationId){jdbc.update("insert into document_transmittal_recipients(tenant_id,transmittal_id,recipient_organization_id) values(?,?,?) on conflict do nothing",tenantId,transmittalId,organizationId);}
-    int itemCount(UUID transmittalId){Integer n=jdbc.queryForObject("select count(*) from document_transmittal_items where transmittal_id=?",Integer.class,transmittalId);return n==null?0:n;}
-    int recipientCount(UUID transmittalId){Integer n=jdbc.queryForObject("select count(*) from document_transmittal_recipients where transmittal_id=?",Integer.class,transmittalId);return n==null?0:n;}
+    int itemCount(UUID tenantId,UUID transmittalId){Integer n=jdbc.queryForObject("select count(*) from document_transmittal_items where tenant_id=? and transmittal_id=?",Integer.class,tenantId,transmittalId);return n==null?0:n;}
+    int recipientCount(UUID tenantId,UUID transmittalId){Integer n=jdbc.queryForObject("select count(*) from document_transmittal_recipients where tenant_id=? and transmittal_id=?",Integer.class,tenantId,transmittalId);return n==null?0:n;}
     void issueTransmittal(UUID tenantId,UUID transmittalId,UUID actorId){jdbc.update("update document_transmittals set status='ISSUED',issued_at=now(),issued_by=?,updated_at=now() where tenant_id=? and id=? and status='DRAFT'",actorId,tenantId,transmittalId);}
     int acknowledge(UUID tenantId,UUID transmittalId,UUID organizationId,UUID actorId){
-        int n=jdbc.update("update document_transmittal_recipients set acknowledged_at=now(),acknowledged_by=? where tenant_id=? and transmittal_id=? and recipient_organization_id=? and acknowledged_at is null",actorId,tenantId,transmittalId,organizationId);
+        // Acknowledgement is a receipt for something that was actually sent. Without the status guard a
+        // DRAFT transmittal could be acknowledged, which both stamped a receipt for an unissued package
+        // and burned the recipient's only chance to acknowledge it once it really was issued.
+        int n=jdbc.update("""
+                update document_transmittal_recipients r set acknowledged_at=now(),acknowledged_by=?
+                 where r.tenant_id=? and r.transmittal_id=? and r.recipient_organization_id=? and r.acknowledged_at is null
+                   and exists(select 1 from document_transmittals t
+                               where t.id=r.transmittal_id and t.tenant_id=r.tenant_id
+                                 and t.status in ('ISSUED','PARTIALLY_ACKNOWLEDGED'))
+                """,actorId,tenantId,transmittalId,organizationId);
         if(n>0)jdbc.update("update document_transmittals t set status=case when not exists(select 1 from document_transmittal_recipients r where r.transmittal_id=t.id and r.acknowledged_at is null) then 'ACKNOWLEDGED' else 'PARTIALLY_ACKNOWLEDGED' end,updated_at=now() where t.tenant_id=? and t.id=? and t.status in ('ISSUED','PARTIALLY_ACKNOWLEDGED')",tenantId,transmittalId);
         return n;
     }

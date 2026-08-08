@@ -51,7 +51,17 @@ public class DocumentController {
     @PostMapping(consumes="application/json")
     public ResponseEntity<DocumentResponse> createJson(@AuthenticationPrincipal Claims claims,@RequestBody DocumentService.CreateDocumentRequest req)throws IOException{UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);projectAccessService.requireActiveUser(t,u);if(req.projectId()!=null)projectAuthorizationService.require(t,u,req.projectId(),ProjectPermission.DOCUMENT_CREATE);return ResponseEntity.ok(toResponse(documentService.createDocument(t,u,req,null)));}
     @GetMapping
-    public ResponseEntity<List<DocumentResponse>> list(@AuthenticationPrincipal Claims claims,@RequestParam(required=false) String docType){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);return ResponseEntity.ok(documentService.listDocuments(t,u,docType).stream().filter(d->documentAuthorizationService.canView(t,u,d.getId())).map(this::toResponse).toList());}
+    public ResponseEntity<DocumentPageResponse> list(@AuthenticationPrincipal Claims claims,
+                                                     @RequestParam(required = false) String docType,
+                                                     @RequestParam(defaultValue = "0") int page,
+                                                     @RequestParam(defaultValue = "50") int size) {
+        UUID t = tenantId(claims), u = userId(claims);
+        assertDocumentAccess(t);
+        DocumentService.DocumentPage result = documentService.listDocuments(t, u, docType, page, size);
+        return ResponseEntity.ok(new DocumentPageResponse(
+                result.documents().stream().map(this::toResponse).toList(),
+                result.page(), result.size(), result.hasMore()));
+    }
     @GetMapping("/{id}")
     public ResponseEntity<DocumentResponse> get(@AuthenticationPrincipal Claims claims,@PathVariable UUID id){UUID t=tenantId(claims),u=userId(claims);assertDocumentAccess(t);documentAuthorizationService.requireView(t,u,id);return ResponseEntity.ok(toResponse(documentService.getDocument(t,u,id)));}
     @PutMapping(value="/{id}",consumes="multipart/form-data")
@@ -79,6 +89,8 @@ public class DocumentController {
     private static UUID userId(Claims c){return UUID.fromString(c.getSubject());}
     private DocumentResponse toResponse(DocumentEntity d){return new DocumentResponse(d.getId(),d.getTitle(),d.getDocType(),d.getDescription(),d.getTags(),d.getCurrentVersion(),d.getCurrentRevisionCode(),d.getStatus().name(),d.getWorkflowId(),d.getProjectId(),d.getOriginatorOrgId(),d.getDocumentCode(),d.getSecurityClassification(),d.getDiscipline(),d.getPackageCode(),d.getLocationCode(),d.getIssuePurpose(),d.getDueAt(),d.getIssuedAt(),d.getReviewOutcome(),d.getCreatedAt(),d.getUpdatedAt());}
     private ApprovalResponse toApprovalResponse(DocumentApprovalEntity a){return new ApprovalResponse(a.getId(),a.getDocumentId(),a.getStatus(),a.getCurrentStep(),a.getStartedAt(),a.getCompletedAt());}
+    /** A page of register rows plus whether another page exists. */
+    public record DocumentPageResponse(List<DocumentResponse> documents,int page,int size,boolean hasMore){}
     public record DocumentResponse(UUID id,String title,String docType,String description,String[] tags,int currentVersion,String currentRevisionCode,String status,UUID workflowId,UUID projectId,UUID originatorOrgId,String documentCode,String securityClassification,String discipline,String packageCode,String locationCode,String issuePurpose,LocalDateTime dueAt,LocalDateTime issuedAt,ReviewOutcome reviewOutcome,LocalDateTime createdAt,LocalDateTime updatedAt){}
     public record VersionResponse(UUID id,UUID documentId,int versionNum,String revisionCode,String issueStatus,String issuePurpose,UUID assetId,String changeNotes,LocalDateTime issuedAt,LocalDateTime createdAt){}
     public record CommentResponse(UUID id,UUID documentId,String authorName,String body,LocalDateTime createdAt){}
