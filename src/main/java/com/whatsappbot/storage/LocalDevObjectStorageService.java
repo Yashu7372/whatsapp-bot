@@ -42,7 +42,7 @@ public class LocalDevObjectStorageService implements ObjectStorageService {
     @Transactional
     public SignedUploadUrl createUploadUrl(UUID tenantId, String fileName,
                                            String contentType, long sizeBytes) {
-        String token     = UUID.randomUUID().toString();
+        String token = UUID.randomUUID().toString();
         String objectKey = tenantId + "/" + UUID.randomUUID() + "/" + sanitize(fileName);
 
         UploadTokenEntity entity = new UploadTokenEntity();
@@ -87,7 +87,12 @@ public class LocalDevObjectStorageService implements ObjectStorageService {
 
     @Override
     public void deleteObject(UUID tenantId, String objectKey) {
-        log.info("LocalDevObjectStorageService.deleteObject tenantId={} objectKey={}", tenantId, objectKey);
+        try {
+            storageService.delete(objectKey);
+            log.debug("Deleted local stored object. tenantId={} objectKey={}", tenantId, objectKey);
+        } catch (RuntimeException e) {
+            log.warn("Failed to delete local stored object. tenantId={} objectKey={}", tenantId, objectKey, e);
+        }
     }
 
     @Override
