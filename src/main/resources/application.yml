@@ -22,6 +22,18 @@ spring:
   flyway:
     enabled: true
 
+  mail:
+    host: ${SMTP_HOST:localhost}
+    port: ${SMTP_PORT:25}
+    username: ${SMTP_USERNAME:}
+    password: ${SMTP_PASSWORD:}
+    properties:
+      mail:
+        smtp:
+          auth: ${SMTP_AUTH:false}
+          starttls:
+            enable: ${SMTP_STARTTLS:false}
+
 server:
   port: ${SERVER_PORT:8080}
 
@@ -31,28 +43,20 @@ whatsapp:
   fallback-access-token: ${WHATSAPP_ACCESS_TOKEN}
   mock-send-enabled: ${WHATSAPP_MOCK_SEND_ENABLED:false}
 
-# ─── Pluggable AI provider config ──────────────────────────────────────────
-# Switch providers by changing AI_PROVIDER (+ that provider's own env vars)
-# and restarting the process/container. No code change, no rebuild.
-# Supported values: GEMINI, OLLAMA, OPENAI, ANTHROPIC.
 ai:
   provider: ${AI_PROVIDER:GEMINI}
   temperature: ${AI_TEMPERATURE:0.0}
   timeout-seconds: ${AI_TIMEOUT_SECONDS:30}
   memory-max-messages: ${AI_MEMORY_MAX_MESSAGES:20}
-
   gemini:
     api-key: ${AI_GEMINI_API_KEY:}
     model-name: ${AI_GEMINI_MODEL:gemini-2.5-flash}
-
   ollama:
     base-url: ${AI_OLLAMA_BASE_URL:http://localhost:11434}
     model-name: ${AI_OLLAMA_MODEL:llama3.1:8b}
-
   openai:
     api-key: ${AI_OPENAI_API_KEY:}
     model-name: ${AI_OPENAI_MODEL:gpt-4o-mini}
-
   anthropic:
     api-key: ${AI_ANTHROPIC_API_KEY:}
     model-name: ${AI_ANTHROPIC_MODEL:claude-sonnet-4-5}
@@ -81,4 +85,13 @@ app:
     default-number-padding: ${PROJECT_DEFAULT_NUMBER_PADDING:4}
     reference-separator: "${PROJECT_REFERENCE_SEPARATOR:-}"
     default-status: ${PROJECT_DEFAULT_STATUS:ACTIVE}
-
+  document-notifications:
+    dispatch-ms: ${DOCUMENT_NOTIFICATION_DISPATCH_MS:15000}
+    delivery-ms: ${DOCUMENT_NOTIFICATION_DELIVERY_MS:30000}
+    sla-scan-ms: ${DOCUMENT_NOTIFICATION_SLA_SCAN_MS:600000}
+    dispatch-batch-size: ${DOCUMENT_NOTIFICATION_DISPATCH_BATCH_SIZE:50}
+    delivery-batch-size: ${DOCUMENT_NOTIFICATION_DELIVERY_BATCH_SIZE:50}
+    max-attempts: ${DOCUMENT_NOTIFICATION_MAX_ATTEMPTS:5}
+    email-enabled: ${DOCUMENT_NOTIFICATION_EMAIL_ENABLED:false}
+    whatsapp-enabled: ${DOCUMENT_NOTIFICATION_WHATSAPP_ENABLED:true}
+    email-from: ${DOCUMENT_NOTIFICATION_EMAIL_FROM:no-reply@document-control.local}
