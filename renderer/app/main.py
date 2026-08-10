@@ -12,6 +12,7 @@ from pydantic import BaseModel, Field
 
 from .render_engine import RenderEngine, RenderFailure
 from .character_routes import router as character_router
+from .dialogue_v2_routes import router as dialogue_v2_router
 
 logging.basicConfig(level=os.getenv("LOG_LEVEL", "INFO"))
 logger = logging.getLogger("media-renderer")
@@ -29,8 +30,9 @@ engine = RenderEngine(
     default_voice=os.getenv("KOKORO_DEFAULT_VOICE", "af_heart"),
 )
 
-app = FastAPI(title="WhatsApp CRM Media Renderer", version="1.0.0")
+app = FastAPI(title="WhatsApp CRM Media Renderer", version="1.1.0")
 app.include_router(character_router)
+app.include_router(dialogue_v2_router)
 
 
 class RenderRequest(BaseModel):
@@ -61,13 +63,17 @@ class RenderResponse(BaseModel):
 def health() -> dict[str, Any]:
     from .character_routes import _get_pack, VIDEO_TEMPLATE_ROOT, DRESS_ROOT
     from character_pack.video_compositor import template_status, templates_ready, dress_status
+    from character_pack.hybrid_photo_compositor import HybridPhotoDialogueCompositor
+
     pack = _get_pack()
     vt_status = template_status(VIDEO_TEMPLATE_ROOT)
+    dynamic = HybridPhotoDialogueCompositor()
     return {
         "status": "UP",
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "renderRoot": str(RENDER_ROOT),
         "characterPackRoot": str(CHARACTER_PACK_ROOT),
+        "dynamicDialogueReady": dynamic.ready(),
         "videoTemplatesReady": templates_ready(VIDEO_TEMPLATE_ROOT),
         "videoTemplates": vt_status,
         "dressOverlays": dress_status(DRESS_ROOT),
