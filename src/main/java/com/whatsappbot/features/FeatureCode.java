@@ -18,5 +18,15 @@ public final class FeatureCode {
     public static final String BYO_DOCUMENT_STORAGE      = "BYO_DOCUMENT_STORAGE";
     public static final String CUSTOMER_KMS              = "CUSTOMER_KMS";
 
+    // Settings module — these predate this class but weren't mirrored here yet; feature_catalog
+    // (V1__baseline.sql) is still the source of truth for the full catalog, this is just the
+    // Java-side constant so call sites don't hardcode the string.
+    public static final String SETTINGS_WEBHOOK          = "SETTINGS_WEBHOOK";
+    public static final String SETTINGS_BOT              = "SETTINGS_BOT";
+    public static final String SETTINGS_TEAM             = "SETTINGS_TEAM";
+    public static final String SETTINGS_SOCIAL           = "SETTINGS_SOCIAL";
+    public static final String SETTINGS_STORAGE          = "SETTINGS_STORAGE";
+    public static final String SETTINGS_BILLING          = "SETTINGS_BILLING";
+
     private FeatureCode() {}
 }

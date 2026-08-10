@@ -7,6 +7,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.authorization.AuthorizationDeniedException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 import org.springframework.web.server.ResponseStatusException;
@@ -62,6 +63,18 @@ public class ApiExceptionHandler {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(Map.of(ERROR_FIELD, "This conflicts with an existing record. "
                         + "It may already exist, or it may reference something that does not."));
+    }
+
+    /**
+     * Thrown by Spring Security's method-security AOP interceptor when a {@code @PreAuthorize}
+     * expression (e.g. {@code @perm.manage(...)}) evaluates false. It's raised from inside the
+     * controller invocation, not the filter chain, so {@code ExceptionTranslationFilter} never sees
+     * it and the generic handler below would otherwise turn every denial into a misleading 500.
+     */
+    @ExceptionHandler(AuthorizationDeniedException.class)
+    public ResponseEntity<Map<String, String>> handleAuthorizationDenied(AuthorizationDeniedException e) {
+        log.debug("Access denied by @PreAuthorize: {}", e.getMessage());
+        return ResponseEntity.status(HttpStatus.FORBIDDEN).body(Map.of(ERROR_FIELD, "Not permitted for this action"));
     }
 
     /** The scanner examined the file and flagged it — the client will not see the file again. */

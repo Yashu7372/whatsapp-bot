@@ -75,15 +75,35 @@ class ResourceCostRepository {
             resourceId, date, date);
     }
 
-    void insertTimesheet(UUID id, UUID tenantId, UUID projectId, UUID orgId, UUID resourceId, LocalDate date, BigDecimal hours, String description, UUID createdBy) {
-        jdbc.update("insert into timesheets(id,tenant_id,project_id,organization_id,resource_id,work_date,hours,status,description,created_by) values(?,?,?,?,?,?,?,?,?,?)",
-            id, tenantId, projectId, orgId, resourceId, date, hours, "SUBMITTED", description, createdBy);
+    void insertTimesheet(UUID id, UUID tenantId, UUID projectId, UUID orgId, UUID resourceId, LocalDate date, BigDecimal hours, String description, UUID createdBy, UUID documentId) {
+        jdbc.update("insert into timesheets(id,tenant_id,project_id,organization_id,resource_id,work_date,hours,status,description,created_by,document_id) values(?,?,?,?,?,?,?,?,?,?,?)",
+            id, tenantId, projectId, orgId, resourceId, date, hours, "SUBMITTED", description, createdBy, documentId);
     }
 
     TimesheetRow findTimesheet(UUID tenantId, UUID projectId, UUID timesheetId) {
         return jdbc.query("select resource_id,organization_id,work_date,hours,status from timesheets where id=? and tenant_id=? and project_id=?",
             rs -> rs.next() ? new TimesheetRow(rs.getObject(1,UUID.class), rs.getObject(2,UUID.class), rs.getDate(3).toLocalDate(), rs.getBigDecimal(4), rs.getString(5)) : null,
             timesheetId, tenantId, projectId);
+    }
+
+    /**
+     * No rate/amount in this projection — this is the view a logger (any active project
+     * participant, not just MANAGER/ADMIN) is allowed to see. Cost fields stay behind
+     * {@link #findActualCosts}, which {@code commercialViewer} already restricts to MANAGER/ADMIN.
+     */
+    List<ResourceCostService.TimeLogView> findTimesheets(UUID tenantId, UUID projectId, UUID orgId, UUID documentId) {
+        StringBuilder sql = new StringBuilder("""
+            select t.id,t.resource_id,r.display_name,t.work_date,t.hours,t.status,t.document_id,t.description
+            from timesheets t join project_resources r on r.id=t.resource_id
+            where t.tenant_id=? and t.project_id=?
+            """);
+        List<Object> args = new java.util.ArrayList<>(List.of(tenantId, projectId));
+        if (orgId != null) { sql.append(" and t.organization_id=?"); args.add(orgId); }
+        if (documentId != null) { sql.append(" and t.document_id=?"); args.add(documentId); }
+        sql.append(" order by t.work_date desc, t.created_at desc limit 200");
+        return jdbc.query(sql.toString(), (rs,n) -> new ResourceCostService.TimeLogView(
+            rs.getObject(1,UUID.class), rs.getObject(2,UUID.class), rs.getString(3), rs.getDate(4).toLocalDate(),
+            rs.getBigDecimal(5), rs.getString(6), rs.getObject(7,UUID.class), rs.getString(8)), args.toArray());
     }
 
     void approveTimesheet(UUID timesheetId, UUID approvedBy) {
@@ -103,18 +123,26 @@ class ResourceCostRepository {
             id, tenantId, projectId, orgId, resourceId, date, runningHours, quantity, "APPROVED", notes, createdBy);
     }
 
-    List<ResourceCostService.ActualCostView> findActualCosts(UUID tenantId, UUID projectId, UUID orgId) {
-        String sql = """
+    List<ResourceCostService.ActualCostView> findActualCosts(UUID tenantId, UUID projectId, UUID orgId, UUID documentId) {
+        StringBuilder sql = new StringBuilder("""
             select a.id,a.organization_id,o.name,a.budget_line_id,b.cost_code,a.resource_id,r.display_name,a.source_type,a.cost_date,a.quantity,a.amount,a.currency,a.description
             from actual_cost_entries a join organizations o on o.id=a.organization_id
             left join budget_lines b on b.id=a.budget_line_id left join project_resources r on r.id=a.resource_id
-            where a.tenant_id=? and a.project_id=?
-            """ + (orgId == null ? "" : " and a.organization_id=?") + " order by a.cost_date desc,a.created_at desc limit 200";
-        Object[] args = orgId == null ? new Object[]{tenantId, projectId} : new Object[]{tenantId, projectId, orgId};
-        return jdbc.query(sql, (rs,n) -> new ResourceCostService.ActualCostView(
+            """);
+        // Only TIMESHEET-sourced entries carry a document via the timesheet they were computed from
+        // (actual_cost_entries itself has no document_id) — this join is a no-op unless documentId is set.
+        if (documentId != null) {
+            sql.append(" left join timesheets t on t.id=a.source_id and a.source_type='TIMESHEET' ");
+        }
+        sql.append(" where a.tenant_id=? and a.project_id=?");
+        List<Object> args = new java.util.ArrayList<>(List.of(tenantId, projectId));
+        if (orgId != null) { sql.append(" and a.organization_id=?"); args.add(orgId); }
+        if (documentId != null) { sql.append(" and t.document_id=?"); args.add(documentId); }
+        sql.append(" order by a.cost_date desc,a.created_at desc limit 200");
+        return jdbc.query(sql.toString(), (rs,n) -> new ResourceCostService.ActualCostView(
             rs.getObject(1,UUID.class), rs.getObject(2,UUID.class), rs.getString(3), rs.getObject(4,UUID.class),
             rs.getString(5), rs.getObject(6,UUID.class), rs.getString(7), rs.getString(8), rs.getDate(9).toLocalDate(),
-            rs.getBigDecimal(10), rs.getBigDecimal(11), rs.getString(12), rs.getString(13)), args);
+            rs.getBigDecimal(10), rs.getBigDecimal(11), rs.getString(12), rs.getString(13)), args.toArray());
     }
 
     private BigDecimal amount(String sql, Object[] args) {

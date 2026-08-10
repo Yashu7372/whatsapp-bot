@@ -16,11 +16,29 @@ import java.time.LocalDateTime;
 public class AuthController {
 
     private final TenantUserRepository userRepository;
+    private final PlatformAdminRepository platformAdminRepository;
     private final JwtService jwtService;
     private final PasswordEncoder passwordEncoder;
 
     @PostMapping("/login")
     public ResponseEntity<TokenResponse> login(@RequestBody LoginRequest req) {
+        PlatformAdminEntity admin = platformAdminRepository.findByEmailAndActiveTrue(req.email())
+                .orElse(null);
+        if (admin != null) {
+            if (!passwordEncoder.matches(req.password(), admin.getPasswordHash())) {
+                return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
+                        .body(new TokenResponse(null, null, null, "Invalid credentials"));
+            }
+            admin.setLastLoginAt(LocalDateTime.now());
+            platformAdminRepository.save(admin);
+
+            String access = jwtService.generatePlatformAccessToken(admin);
+            String refresh = jwtService.generatePlatformRefreshToken(admin);
+            log.info("Platform admin logged in. email={}", admin.getEmail());
+
+            return ResponseEntity.ok(new TokenResponse(access, refresh, null, null));
+        }
+
         TenantUserEntity user = userRepository.findByEmailAndActiveTrue(req.email())
                 .orElse(null);
 
@@ -48,6 +66,14 @@ public class AuthController {
                 return ResponseEntity.status(HttpStatus.UNAUTHORIZED)
                         .body(new TokenResponse(null, null, null, "Not a refresh token"));
             }
+
+            if ("PLATFORM".equals(claims.get("scope"))) {
+                PlatformAdminEntity admin = platformAdminRepository.findById(jwtService.extractUserId(req.refreshToken()))
+                        .orElseThrow(() -> new IllegalArgumentException("Platform admin not found"));
+                String access = jwtService.generatePlatformAccessToken(admin);
+                return ResponseEntity.ok(new TokenResponse(access, req.refreshToken(), null, null));
+            }
+
             TenantUserEntity user = userRepository.findById(jwtService.extractUserId(req.refreshToken()))
                     .orElseThrow(() -> new IllegalArgumentException("User not found"));
 

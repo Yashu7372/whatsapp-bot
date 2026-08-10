@@ -26,6 +26,14 @@ public class JwtService {
         return buildToken(user, jwtProperties.getRefreshExpirySeconds(), "refresh");
     }
 
+    public String generatePlatformAccessToken(PlatformAdminEntity admin) {
+        return buildPlatformToken(admin, jwtProperties.getAccessExpirySeconds(), "access");
+    }
+
+    public String generatePlatformRefreshToken(PlatformAdminEntity admin) {
+        return buildPlatformToken(admin, jwtProperties.getRefreshExpirySeconds(), "refresh");
+    }
+
     private String buildToken(TenantUserEntity user, long expirySeconds, String tokenType) {
         Instant now = Instant.now();
         return Jwts.builder()
@@ -33,6 +41,20 @@ public class JwtService {
                 .claim("email", user.getEmail())
                 .claim("tenantId", user.getTenant().getId().toString())
                 .claim("role", user.getRole().name())
+                .claim("type", tokenType)
+                .issuedAt(Date.from(now))
+                .expiration(Date.from(now.plusSeconds(expirySeconds)))
+                .signWith(secretKey())
+                .compact();
+    }
+
+    private String buildPlatformToken(PlatformAdminEntity admin, long expirySeconds, String tokenType) {
+        Instant now = Instant.now();
+        return Jwts.builder()
+                .subject(admin.getId().toString())
+                .claim("email", admin.getEmail())
+                .claim("scope", "PLATFORM")
+                .claim("role", "PLATFORM_SUPER_ADMIN")
                 .claim("type", tokenType)
                 .issuedAt(Date.from(now))
                 .expiration(Date.from(now.plusSeconds(expirySeconds)))

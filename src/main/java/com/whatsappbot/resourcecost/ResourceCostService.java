@@ -91,8 +91,24 @@ public class ResourceCostService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,"Timesheet hours must be between 0 and 24");
         UUID id=UUID.randomUUID();
         repository.insertTimesheet(id, tenantId, projectId, owner.organizationId(), req.resourceId(),
-                req.workDate()==null?LocalDate.now():req.workDate(), req.hours(), req.description(), userId);
+                req.workDate()==null?LocalDate.now():req.workDate(), req.hours(), req.description(), userId, req.documentId());
         return id;
+    }
+
+    /**
+     * Hours/status only — no rate or amount. Any active project participant may see their own
+     * organization's logged time (that's "the working"); the computed cost stays behind
+     * {@link #actualCosts}, which {@code commercialViewer} restricts to MANAGER/ADMIN ("the
+     * billing"). Matches how {@link #broad} already lets CLIENT/CONSULTANT see across all
+     * organizations on a project.
+     */
+    @Transactional(readOnly = true)
+    public List<TimeLogView> timeLog(UUID tenantId, UUID userId, UUID projectId, UUID documentId) {
+        TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
+        projectService.get(tenantId, userId, projectId);
+        accessService.requireProjectVisibility(tenantId, projectId, actor);
+        UUID orgFilter = broad(actor,tenantId,projectId) ? null : actor.getOrganizationId();
+        return repository.findTimesheets(tenantId, projectId, orgFilter, documentId);
     }
 
     @Transactional
@@ -156,9 +172,19 @@ public class ResourceCostService {
 
     @Transactional(readOnly = true)
     public List<ActualCostView> actualCosts(UUID tenantId, UUID userId, UUID projectId) {
+        return actualCosts(tenantId, userId, projectId, null);
+    }
+
+    /**
+     * {@code documentId}: the "generate a bill for this document" view — restricts the approved
+     * TIMESHEET-sourced entries to the ones logged against a specific document. Still gated by
+     * {@code commercialViewer} (MANAGER/ADMIN only), same as the unfiltered ledger.
+     */
+    @Transactional(readOnly = true)
+    public List<ActualCostView> actualCosts(UUID tenantId, UUID userId, UUID projectId, UUID documentId) {
         TenantUserEntity actor=commercialViewer(tenantId,userId,projectId);
         UUID orgFilter = broad(actor,tenantId,projectId) ? null : actor.getOrganizationId();
-        return repository.findActualCosts(tenantId, projectId, orgFilter);
+        return repository.findActualCosts(tenantId, projectId, orgFilter, documentId);
     }
 
     private void validateBudgetLine(UUID tenantId, UUID projectId, UUID budgetLineId) {
@@ -202,6 +228,8 @@ public class ResourceCostService {
     public record ActualCostView(UUID id,UUID organizationId,String organizationName,UUID budgetLineId,String costCode,UUID resourceId,String resourceName,String sourceType,LocalDate costDate,BigDecimal quantity,BigDecimal amount,String currency,String description){}
     public record CreateResourceRequest(UUID organizationId,String resourceType,String resourceCode,String displayName,UUID userId){}
     public record CreateRateRequest(String rateType,BigDecimal rateAmount,String currency,LocalDate effectiveFrom,LocalDate effectiveTo){}
-    public record CreateTimesheetRequest(UUID resourceId,LocalDate workDate,BigDecimal hours,String description){}
+    public record CreateTimesheetRequest(UUID resourceId,LocalDate workDate,BigDecimal hours,String description,UUID documentId){}
     public record CreateUsageRequest(UUID resourceId,UUID budgetLineId,LocalDate usageDate,BigDecimal runningHours,BigDecimal quantity,String notes){}
+    /** No rate/amount — see {@link #timeLog}. */
+    public record TimeLogView(UUID id,UUID resourceId,String resourceName,LocalDate workDate,BigDecimal hours,String status,UUID documentId,String description){}
 }
