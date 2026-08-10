@@ -111,6 +111,20 @@ public class ResourceCostService {
         return repository.findTimesheets(tenantId, projectId, orgFilter, documentId);
     }
 
+    /**
+     * {@link #resources} without the MANAGER/ADMIN gate — a worker needs to know which resource ID
+     * is theirs to log time against. Same fields as {@link ResourceView} (no rate/cost anywhere in
+     * that record), just a different, more open authorization path.
+     */
+    @Transactional(readOnly = true)
+    public List<ResourceView> myResources(UUID tenantId, UUID userId, UUID projectId) {
+        TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
+        projectService.get(tenantId, userId, projectId);
+        accessService.requireProjectVisibility(tenantId, projectId, actor);
+        UUID orgFilter = broad(actor,tenantId,projectId) ? null : actor.getOrganizationId();
+        return repository.findResources(tenantId, projectId, orgFilter);
+    }
+
     @Transactional
     public void approveTimesheet(UUID tenantId, UUID userId, UUID projectId, UUID timesheetId, UUID budgetLineId) {
         TenantUserEntity actor=commercialEditor(tenantId,userId,projectId);

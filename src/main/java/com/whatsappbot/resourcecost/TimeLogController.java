@@ -34,6 +34,13 @@ public class TimeLogController {
         return ResponseEntity.ok(service.timeLog(tenantId(claims),userId(claims),projectId,documentId));
     }
 
+    // Which resource ID is "me"/my crew — needed to submit a timesheet at all. No rate/cost field
+    // exists on ResourceView, so this is safe to open up alongside the rest of this controller.
+    @GetMapping("/resources")
+    public ResponseEntity<List<ResourceCostService.ResourceView>> myResources(@AuthenticationPrincipal Claims claims,@PathVariable UUID projectId){
+        return ResponseEntity.ok(service.myResources(tenantId(claims),userId(claims),projectId));
+    }
+
     private static UUID tenantId(Claims claims){return UUID.fromString((String)claims.get("tenantId"));}
     private static UUID userId(Claims claims){return UUID.fromString(claims.getSubject());}
 }
