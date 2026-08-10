@@ -52,6 +52,8 @@ from character_pack.video_compositor import (
     VideoCompositorRequest,
     template_status,
     templates_ready,
+    dress_status,
+    load_dress_overlays,
 )
 
 logger = logging.getLogger("character-routes")
@@ -63,6 +65,7 @@ RENDER_ROOT = Path(os.getenv("RENDER_ROOT", "/data/renders"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("AI_GEMINI_API_KEY")
 
 VIDEO_TEMPLATE_ROOT = PACK_ROOT / "video_templates"
+DRESS_ROOT = PACK_ROOT / "dresses"
 
 VALID_EMOTIONS = {"idle", "talking", "curious", "surprised", "laughing", "thinking"}
 
@@ -193,6 +196,71 @@ def video_templates_status() -> VideoTemplatesStatusResponse:
         ready=templates_ready(VIDEO_TEMPLATE_ROOT),
         templates=st,
     )
+
+
+# ------------------------------------------------------------------
+# Dress / costume overlay upload
+# ------------------------------------------------------------------
+
+class DressUploadResponse(BaseModel):
+    character: str
+    bytes: int
+    path: str
+    message: str
+
+
+class DressStatusResponse(BaseModel):
+    bhaiya: str | None
+    chitti: str | None
+
+
+@router.post(
+    "/v1/character-pack/dress/{character}",
+    response_model=DressUploadResponse,
+)
+async def upload_dress(
+    character: str,
+    image: UploadFile,
+) -> DressUploadResponse:
+    """
+    Upload a dress / costume PNG for a character (must be RGBA with transparent background).
+
+    The dress layer is composited on top of the character clip in every future render —
+    no re-upload needed unless you want to change the outfit.
+
+    character: bhaiya | chitti
+    """
+    if character not in ("bhaiya", "chitti"):
+        raise HTTPException(status_code=422, detail="character must be 'bhaiya' or 'chitti'")
+    allowed_types = {"image/png", "application/octet-stream"}
+    if image.content_type not in allowed_types and not (image.filename or "").lower().endswith(".png"):
+        raise HTTPException(status_code=422, detail="Only PNG images accepted (must have transparent background / RGBA)")
+
+    content = await image.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+
+    DRESS_ROOT.mkdir(parents=True, exist_ok=True)
+    dest = DRESS_ROOT / f"{character}.png"
+    dest.write_bytes(content)
+    logger.info("Stored dress overlay: %s (%d bytes) → %s", character, len(content), dest)
+
+    return DressUploadResponse(
+        character=character,
+        bytes=len(content),
+        path=str(dest),
+        message=(
+            f"Dress stored for {character}. All future renders will composite "
+            "this outfit on top of the character clip automatically."
+        ),
+    )
+
+
+@router.get("/v1/character-pack/dress/status", response_model=DressStatusResponse)
+def dress_overlay_status() -> DressStatusResponse:
+    """List which dress overlays are uploaded and ready."""
+    st = dress_status(DRESS_ROOT)
+    return DressStatusResponse(bhaiya=st.get("bhaiya"), chitti=st.get("chitti"))
 
 
 # ------------------------------------------------------------------
@@ -355,6 +423,7 @@ async def start_dialogue_render(
 
     bg_path = PACK_ROOT / "scene" / "background.png"
     background_path = bg_path if bg_path.exists() else None
+    dress_overlays = load_dress_overlays(DRESS_ROOT)
 
     if use_video:
         vt_turns = [
@@ -371,6 +440,7 @@ async def start_dialogue_render(
             output_path=output_path,
             template_root=VIDEO_TEMPLATE_ROOT,
             background_path=background_path,
+            dress_overlays=dress_overlays,
         )
         background_tasks.add_task(_run_video_render, request.jobId, vt_req)
         render_mode = "video-templates"

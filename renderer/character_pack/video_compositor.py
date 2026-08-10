@@ -76,6 +76,9 @@ class VideoCompositorRequest:
     output_path: Path
     template_root: Path       # e.g. /data/character_pack/video_templates
     background_path: Path | None = None
+    # RGBA PNG per character overlaid on top of the character clip (dress/costume layer).
+    # Keys: "bhaiya" | "chitti".  Missing keys mean no dress for that character.
+    dress_overlays: dict[str, Path] = field(default_factory=dict)
     fps: int = 30
 
 
@@ -99,9 +102,10 @@ class VideoTemplateCompositor:
             for idx, turn in enumerate(req.turns):
                 audio = self._ensure_audio(turn, workdir, idx)
                 clip = _find_clip(req.template_root, turn.speaker, turn.emotion)
+                dress = req.dress_overlays.get(turn.speaker)
 
                 seg = workdir / f"seg-{idx:03d}.mp4"
-                self._composite_turn(clip, req.background_path, turn, seg)
+                self._composite_turn(clip, req.background_path, dress, turn, seg)
                 segments.append(seg)
 
                 if audio and audio.exists():
@@ -129,6 +133,7 @@ class VideoTemplateCompositor:
         self,
         clip: Path | None,
         background_path: Path | None,
+        dress_path: Path | None,
         turn: VideoTemplateTurn,
         output: Path,
     ) -> None:
@@ -139,8 +144,12 @@ class VideoTemplateCompositor:
         color = p["label_color"]
         dur = turn.duration_seconds
 
+        has_bg = background_path and background_path.exists()
+        has_clip = clip and clip.exists()
+        has_dress = dress_path and dress_path.exists()
+
         # Background input
-        if background_path and background_path.exists():
+        if has_bg:
             bg_in = ["-loop", "1", "-i", str(background_path)]
             bg_filter = f"[0:v]scale={CANVAS_W}:{CANVAS_H},setsar=1[bg];"
             next_idx = 1
@@ -152,14 +161,27 @@ class VideoTemplateCompositor:
             next_idx = 0
 
         # Character clip input (looped)
-        if clip and clip.exists():
+        if has_clip:
             char_in = ["-stream_loop", "-1", "-i", str(clip)]
             char_filter = f"[{next_idx}:v]scale={sw}:{sh},setsar=1[char];"
-            overlay = f"[bg][char]overlay={ox}:{oy}[scene];"
+            overlay = f"[bg][char]overlay={ox}:{oy}[scene0];"
         else:
             char_in = []
             char_filter = ""
-            overlay = "[bg]copy[scene];"
+            overlay = "[bg]copy[scene0];"
+
+        # Dress overlay — RGBA PNG composited on top of the character clip.
+        # Input index is always bg_count + char_count.
+        dress_idx = (1 if has_bg else 0) + (1 if has_clip else 0)
+        if has_dress:
+            dress_in = ["-loop", "1", "-i", str(dress_path)]
+            dress_filter = (
+                f"[{dress_idx}:v]scale={sw}:{sh},format=rgba[dresslayer];"
+                f"[scene0][dresslayer]overlay={ox}:{oy}[scene];"
+            )
+        else:
+            dress_in = []
+            dress_filter = "[scene0]copy[scene];"
 
         # Subtitle box + text lines
         lines = _wrap(turn.text, max_chars=38)[:4]
@@ -186,6 +208,7 @@ class VideoTemplateCompositor:
             f"{bg_filter}"
             f"{char_filter}"
             f"{overlay}"
+            f"{dress_filter}"
             f"[scene]{','.join(text_parts)}[out]"
         )
 
@@ -193,6 +216,7 @@ class VideoTemplateCompositor:
             "ffmpeg", "-y",
             *bg_in,
             *char_in,
+            *dress_in,
             "-filter_complex", fc,
             "-map", "[out]",
             "-t", f"{dur:.3f}",
@@ -295,6 +319,25 @@ class VideoTemplateCompositor:
 # ------------------------------------------------------------------
 # Module-level helpers
 # ------------------------------------------------------------------
+
+def dress_status(dress_root: Path) -> dict[str, str | None]:
+    """Return the stored dress PNG path per character, or None if not uploaded yet."""
+    result: dict[str, str | None] = {}
+    for speaker in ("bhaiya", "chitti"):
+        p = dress_root / f"{speaker}.png"
+        result[speaker] = str(p) if p.exists() else None
+    return result
+
+
+def load_dress_overlays(dress_root: Path) -> dict[str, Path]:
+    """Return a dict mapping character name → dress PNG Path for use in VideoCompositorRequest."""
+    overlays: dict[str, Path] = {}
+    for speaker in ("bhaiya", "chitti"):
+        p = dress_root / f"{speaker}.png"
+        if p.exists():
+            overlays[speaker] = p
+    return overlays
+
 
 def template_status(template_root: Path) -> dict[str, dict[str, str]]:
     """Return which video templates are present on disk."""

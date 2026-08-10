@@ -59,8 +59,8 @@ class RenderResponse(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    from .character_routes import _get_pack, VIDEO_TEMPLATE_ROOT
-    from character_pack.video_compositor import template_status, templates_ready
+    from .character_routes import _get_pack, VIDEO_TEMPLATE_ROOT, DRESS_ROOT
+    from character_pack.video_compositor import template_status, templates_ready, dress_status
     pack = _get_pack()
     vt_status = template_status(VIDEO_TEMPLATE_ROOT)
     return {
@@ -70,6 +70,7 @@ def health() -> dict[str, Any]:
         "characterPackRoot": str(CHARACTER_PACK_ROOT),
         "videoTemplatesReady": templates_ready(VIDEO_TEMPLATE_ROOT),
         "videoTemplates": vt_status,
+        "dressOverlays": dress_status(DRESS_ROOT),
         "staticSpritePackReady": pack.is_ready() if pack else False,
         "templates": sorted(engine.template_codes()),
     }
