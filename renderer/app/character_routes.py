@@ -1,21 +1,33 @@
 """
-Character pack and dialogue render routes — all heavy work runs here in the
-renderer worker service. Spring Boot submits jobs and polls; it never processes
-images or renders video itself.
+Character pack and dialogue render routes.
 
-Routes:
-  POST /v1/character-pack/generate         Upload reference image → Gemini expression pack
-  GET  /v1/character-pack/status           Poll generation job status
-  GET  /v1/character-pack/info             Describe the ready pack
-  POST /v1/character-pack/photos/{char}    Upload real photo for bhaiya / chitti (SadTalker mode)
-  GET  /v1/character-pack/photos/status    Check whether both real photos are present
-  POST /v1/dialogue/render                 Submit dialogue turns → background render
-  GET  /v1/dialogue/render/{job_id}        Poll dialogue render status
+All heavy work runs in this renderer worker service.
+Spring Boot only submits jobs and polls status — it never processes video itself.
 
-RENDER_MODE env var:
-  "auto"       (default) Use SadTalker when service is up and photos present, else static
-  "sadtalker"  Always use SadTalker (fail clearly if unavailable or photos missing)
-  "static"     Always use PIL-based static compositor (Gemini expression PNGs)
+── Video-template mode (preferred) ─────────────────────────────────────────
+Download animated character clips once from the SadTalker website (or any
+portrait-animation tool) and upload them here.  Every future render loops
+those stored clips onto a background with subtitles — zero API calls, zero
+re-generation.
+
+Upload clips once:
+  POST /v1/character-pack/video-templates/{character}/{emotion}
+Check which are present:
+  GET  /v1/character-pack/video-templates/status
+
+── Static-sprite mode (fallback) ────────────────────────────────────────────
+Generate expression PNG sprites via Gemini and use PIL frame compositing.
+
+Generate sprites from a reference photo:
+  POST /v1/character-pack/generate
+Check status:
+  GET  /v1/character-pack/status
+
+── Dialogue rendering ────────────────────────────────────────────────────────
+  POST /v1/dialogue/render       Submit turns → background render job
+  GET  /v1/dialogue/render/{id}  Poll job status
+
+Render priority: video-templates → static-sprites → error
 """
 
 from __future__ import annotations
@@ -28,15 +40,19 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, UploadFile
 from pydantic import BaseModel, Field
 
-from ..character_pack.compositor import DialogueCompositor, DialogueTurn, CompositorRequest
-from ..character_pack.generator import CharacterPackGenerator
-from ..character_pack.models import CharacterPack
-from ..character_pack.photo_compositor import PhotoDialogueCompositor, PhotoDialogueTurn, PhotoCompositorRequest
-from ..character_pack.sadtalker_client import SadTalkerClient, SadTalkerUnavailable
+from character_pack.compositor import DialogueCompositor, DialogueTurn, CompositorRequest
+from character_pack.generator import CharacterPackGenerator
+from character_pack.models import CharacterPack
+from character_pack.video_compositor import (
+    VideoTemplateCompositor,
+    VideoTemplateTurn,
+    VideoCompositorRequest,
+    template_status,
+    templates_ready,
+)
 
 logger = logging.getLogger("character-routes")
 
@@ -45,22 +61,13 @@ router = APIRouter()
 PACK_ROOT = Path(os.getenv("CHARACTER_PACK_ROOT", "/data/character_pack"))
 RENDER_ROOT = Path(os.getenv("RENDER_ROOT", "/data/renders"))
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY") or os.getenv("AI_GEMINI_API_KEY")
-RENDER_MODE = os.getenv("RENDER_MODE", "auto").lower()   # auto | sadtalker | static
-SADTALKER_URL = os.getenv("SADTALKER_URL", "http://sadtalker:8091")
 
+VIDEO_TEMPLATE_ROOT = PACK_ROOT / "video_templates"
+
+VALID_EMOTIONS = {"idle", "talking", "curious", "surprised", "laughing", "thinking"}
+
+_video_compositor = VideoTemplateCompositor()
 _static_compositor = DialogueCompositor()
-_photo_compositor: PhotoDialogueCompositor | None = None
-_photo_compositor_lock = threading.Lock()
-
-_sadtalker_client = SadTalkerClient(base_url=SADTALKER_URL)
-
-
-def _get_photo_compositor() -> PhotoDialogueCompositor:
-    global _photo_compositor
-    with _photo_compositor_lock:
-        if _photo_compositor is None:
-            _photo_compositor = PhotoDialogueCompositor(sadtalker_client=_sadtalker_client)
-        return _photo_compositor
 
 
 # ------------------------------------------------------------------
@@ -104,24 +111,92 @@ def _invalidate_pack() -> None:
 
 
 # ------------------------------------------------------------------
-# Render mode selection
+# Video template upload & status
 # ------------------------------------------------------------------
 
-def _should_use_sadtalker() -> bool:
-    """Decide whether to use the SadTalker photo compositor for this render."""
-    if RENDER_MODE == "static":
-        return False
-    if RENDER_MODE == "sadtalker":
-        return True
-    # "auto": use SadTalker only when the service is reachable and photos are present
-    try:
-        return _sadtalker_client.is_available() and _sadtalker_client.photos_ready()
-    except Exception:
-        return False
+class VideoTemplateUploadResponse(BaseModel):
+    character: str
+    emotion: str
+    bytes: int
+    path: str
+    message: str
+
+
+class VideoTemplatesStatusResponse(BaseModel):
+    ready: bool
+    templates: dict[str, dict[str, str]]
+
+
+@router.post(
+    "/v1/character-pack/video-templates/{character}/{emotion}",
+    response_model=VideoTemplateUploadResponse,
+)
+async def upload_video_template(
+    character: str,
+    emotion: str,
+    clip: UploadFile,
+) -> VideoTemplateUploadResponse:
+    """
+    Upload a pre-generated animated character clip.
+
+    Download the clip once from the SadTalker website (or any portrait-animation
+    tool using the real nephews' photos).  Store it here and every future video
+    will reuse it — no API, no re-generation.
+
+    character: bhaiya | chitti
+    emotion:   idle | talking | curious | surprised | laughing | thinking
+    """
+    if character not in ("bhaiya", "chitti"):
+        raise HTTPException(status_code=422, detail="character must be 'bhaiya' or 'chitti'")
+    if emotion not in VALID_EMOTIONS:
+        raise HTTPException(
+            status_code=422,
+            detail=f"emotion must be one of: {', '.join(sorted(VALID_EMOTIONS))}",
+        )
+    allowed_types = {"video/mp4", "video/quicktime", "application/octet-stream"}
+    if clip.content_type not in allowed_types and not (clip.filename or "").endswith(".mp4"):
+        raise HTTPException(status_code=422, detail="Only MP4 video files accepted")
+
+    content = await clip.read()
+    if not content:
+        raise HTTPException(status_code=422, detail="Uploaded file is empty")
+
+    dest_dir = VIDEO_TEMPLATE_ROOT / character
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / f"{emotion}.mp4"
+    dest.write_bytes(content)
+    logger.info(
+        "Stored video template: %s/%s (%d bytes) → %s",
+        character, emotion, len(content), dest,
+    )
+
+    return VideoTemplateUploadResponse(
+        character=character,
+        emotion=emotion,
+        bytes=len(content),
+        path=str(dest),
+        message=(
+            f"Template stored. All future '{emotion}' turns for {character} "
+            "will use this clip — no re-generation needed."
+        ),
+    )
+
+
+@router.get(
+    "/v1/character-pack/video-templates/status",
+    response_model=VideoTemplatesStatusResponse,
+)
+def video_templates_status() -> VideoTemplatesStatusResponse:
+    """List which video templates are stored and ready for rendering."""
+    st = template_status(VIDEO_TEMPLATE_ROOT)
+    return VideoTemplatesStatusResponse(
+        ready=templates_ready(VIDEO_TEMPLATE_ROOT),
+        templates=st,
+    )
 
 
 # ------------------------------------------------------------------
-# Gemini-based character pack generation (expression sprites)
+# Gemini-based character pack generation (static PNG sprites)
 # ------------------------------------------------------------------
 
 class GeneratePackResponse(BaseModel):
@@ -214,78 +289,7 @@ def character_pack_info() -> dict:
 
 
 # ------------------------------------------------------------------
-# Real-photo management (SadTalker mode — stored once, reused forever)
-# ------------------------------------------------------------------
-
-class PhotoUploadResponse(BaseModel):
-    character: str
-    bytes: int
-    message: str
-
-
-class PhotosStatusResponse(BaseModel):
-    bhaiya: bool
-    chitti: bool
-    sadtalkerAvailable: bool
-    renderMode: str
-
-
-@router.post("/v1/character-pack/photos/{character}", response_model=PhotoUploadResponse)
-async def upload_character_photo(character: str, photo: UploadFile) -> PhotoUploadResponse:
-    """
-    Upload the real photo for bhaiya or chitti.  Stored once in the SadTalker
-    service, reused for every video without any API calls.
-    """
-    if character not in ("bhaiya", "chitti"):
-        raise HTTPException(status_code=422, detail="character must be 'bhaiya' or 'chitti'")
-    allowed = {"image/jpeg", "image/png", "image/webp"}
-    if photo.content_type not in allowed:
-        raise HTTPException(status_code=422, detail="Only JPEG / PNG / WEBP images accepted")
-
-    content = await photo.read()
-    if not content:
-        raise HTTPException(status_code=422, detail="Uploaded file is empty")
-
-    # Save temporarily so we can forward to SadTalker service
-    tmp_path = PACK_ROOT / f"_upload_{character}_{photo.filename}"
-    PACK_ROOT.mkdir(parents=True, exist_ok=True)
-    tmp_path.write_bytes(content)
-    try:
-        result = _sadtalker_client.upload_photo(character, tmp_path)
-    except httpx.ConnectError:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "SadTalker service is not reachable. "
-                "Start the sadtalker service and try again."
-            ),
-        )
-    except Exception as exc:
-        raise HTTPException(status_code=500, detail=f"Photo upload failed: {exc}")
-    finally:
-        tmp_path.unlink(missing_ok=True)
-
-    return PhotoUploadResponse(
-        character=character,
-        bytes=result.get("bytes", len(content)),
-        message=f"Photo stored. Every video generated for {character} will use this real face.",
-    )
-
-
-@router.get("/v1/character-pack/photos/status", response_model=PhotosStatusResponse)
-def photos_status() -> PhotosStatusResponse:
-    st_available = _sadtalker_client.is_available()
-    photos = _sadtalker_client.photos_status() if st_available else {"bhaiya": False, "chitti": False}
-    return PhotosStatusResponse(
-        bhaiya=photos.get("bhaiya", False),
-        chitti=photos.get("chitti", False),
-        sadtalkerAvailable=st_available,
-        renderMode=RENDER_MODE,
-    )
-
-
-# ------------------------------------------------------------------
-# Dialogue rendering
+# Dialogue rendering — uses video templates when present, else static sprites
 # ------------------------------------------------------------------
 
 class DialogueTurnRequest(BaseModel):
@@ -305,7 +309,7 @@ class DialogueRenderRequest(BaseModel):
 class DialogueRenderResponse(BaseModel):
     jobId: str
     status: str
-    renderMode: str
+    renderMode: str   # "video-templates" | "static-sprites"
 
 
 class DialogueStatusResponse(BaseModel):
@@ -327,23 +331,20 @@ async def start_dialogue_render(
     if output_path.suffix.lower() != ".mp4":
         raise HTTPException(status_code=422, detail="outputPath must end with .mp4")
 
-    use_sadtalker = _should_use_sadtalker()
+    use_video = templates_ready(VIDEO_TEMPLATE_ROOT)
 
-    if use_sadtalker:
-        active_mode = "sadtalker"
-    else:
-        # Static mode requires the Gemini expression pack
+    if not use_video:
         pack = _get_pack()
         if not pack or not pack.is_ready():
             raise HTTPException(
                 status_code=422,
                 detail=(
-                    "Neither SadTalker photos nor a Gemini expression pack are available. "
-                    "Upload real photos via POST /v1/character-pack/photos/{character} "
-                    "or generate the expression pack via POST /v1/character-pack/generate."
+                    "No character assets are available for rendering. "
+                    "Upload video templates (preferred) via "
+                    "POST /v1/character-pack/video-templates/{character}/{emotion}, "
+                    "or generate static sprites via POST /v1/character-pack/generate."
                 ),
             )
-        active_mode = "static"
 
     with _dialogue_lock:
         _dialogue_jobs[request.jobId] = {
@@ -352,24 +353,27 @@ async def start_dialogue_render(
             "error": None,
         }
 
-    if use_sadtalker:
-        photo_turns = [
-            PhotoDialogueTurn(
+    bg_path = PACK_ROOT / "scene" / "background.png"
+    background_path = bg_path if bg_path.exists() else None
+
+    if use_video:
+        vt_turns = [
+            VideoTemplateTurn(
                 speaker=t.speaker,
+                emotion=t.emotion,
                 text=t.text,
                 duration_seconds=t.duration_seconds,
             )
             for t in request.turns
         ]
-        bg_path = (PACK_ROOT / "scene" / "background.png") if (PACK_ROOT / "scene" / "background.png").exists() else None
-        photo_req = PhotoCompositorRequest(
-            turns=photo_turns,
+        vt_req = VideoCompositorRequest(
+            turns=vt_turns,
             output_path=output_path,
-            background_path=bg_path,
+            template_root=VIDEO_TEMPLATE_ROOT,
+            background_path=background_path,
         )
-        background_tasks.add_task(
-            _run_photo_render, request.jobId, photo_req
-        )
+        background_tasks.add_task(_run_video_render, request.jobId, vt_req)
+        render_mode = "video-templates"
     else:
         pack = _get_pack()
         static_turns = [
@@ -381,28 +385,31 @@ async def start_dialogue_render(
             )
             for t in request.turns
         ]
-        static_req = CompositorRequest(turns=static_turns, output_path=output_path, pack=pack)
-        background_tasks.add_task(
-            _run_static_render, request.jobId, static_req
+        static_req = CompositorRequest(
+            turns=static_turns,
+            output_path=output_path,
+            pack=pack,
         )
+        background_tasks.add_task(_run_static_render, request.jobId, static_req)
+        render_mode = "static-sprites"
 
     return DialogueRenderResponse(
         jobId=request.jobId,
         status=_JobStatus.RUNNING,
-        renderMode=active_mode,
+        renderMode=render_mode,
     )
 
 
-def _run_photo_render(job_id: str, req: PhotoCompositorRequest) -> None:
+def _run_video_render(job_id: str, req: VideoCompositorRequest) -> None:
     try:
         req.output_path.parent.mkdir(parents=True, exist_ok=True)
-        _get_photo_compositor().render(req)
+        _video_compositor.render(req)
         with _dialogue_lock:
             _dialogue_jobs[job_id]["status"] = _JobStatus.DONE
             _dialogue_jobs[job_id]["outputPath"] = str(req.output_path)
-        logger.info("Photo dialogue render complete. job=%s", job_id)
+        logger.info("Video-template render complete. job=%s", job_id)
     except Exception as exc:
-        logger.exception("Photo dialogue render failed. job=%s", job_id)
+        logger.exception("Video-template render failed. job=%s", job_id)
         with _dialogue_lock:
             _dialogue_jobs[job_id]["status"] = _JobStatus.FAILED
             _dialogue_jobs[job_id]["error"] = str(exc)
@@ -415,9 +422,9 @@ def _run_static_render(job_id: str, req: CompositorRequest) -> None:
         with _dialogue_lock:
             _dialogue_jobs[job_id]["status"] = _JobStatus.DONE
             _dialogue_jobs[job_id]["outputPath"] = str(req.output_path)
-        logger.info("Static dialogue render complete. job=%s", job_id)
+        logger.info("Static-sprite render complete. job=%s", job_id)
     except Exception as exc:
-        logger.exception("Static dialogue render failed. job=%s", job_id)
+        logger.exception("Static-sprite render failed. job=%s", job_id)
         with _dialogue_lock:
             _dialogue_jobs[job_id]["status"] = _JobStatus.FAILED
             _dialogue_jobs[job_id]["error"] = str(exc)
