@@ -1,10 +1,4 @@
-"""
-HTTP client for the SadTalker worker service.
-
-The renderer calls this to turn one dialogue turn (photo + audio) into a
-talking-head MP4 clip. The client is deliberately thin — no retry logic, no
-local fallback — so failures surface clearly to the compositor.
-"""
+"""HTTP client for the local SadTalker worker service."""
 from __future__ import annotations
 
 import logging
@@ -25,30 +19,20 @@ class SadTalkerUnavailable(RuntimeError):
 
 
 class SadTalkerClient:
-    """Thin HTTP client for the SadTalker microservice."""
+    """Thin HTTP client for the local SadTalker microservice."""
 
     def __init__(self, base_url: str = SADTALKER_URL) -> None:
         self._base_url = base_url.rstrip("/")
 
-    # ------------------------------------------------------------------
-    # Core animation call — used per dialogue turn
-    # ------------------------------------------------------------------
-
     def animate(self, character: str, audio_path: Path, output_path: Path) -> Path:
-        """
-        Call the SadTalker service to animate the stored photo for `character`
-        with the audio at `audio_path`. Writes the resulting MP4 to `output_path`.
-
-        The stored photo is retrieved from disk by the SadTalker service itself —
-        only the audio is sent over the wire. No API key, no internet.
-        """
+        """Animate the stored character photo using the supplied dialogue audio."""
         logger.info("SadTalker: animate %s (%s)", character, audio_path.name)
-        with open(audio_path, "rb") as f:
+        with open(audio_path, "rb") as handle:
             try:
-                resp = httpx.post(
+                response = httpx.post(
                     f"{self._base_url}/v1/animate",
                     params={"character": character},
-                    files={"audio": ("audio.wav", f, "audio/wav")},
+                    files={"audio": ("audio.wav", handle, "audio/wav")},
                     timeout=_ANIMATE_TIMEOUT,
                 )
             except httpx.ConnectError as exc:
@@ -56,32 +40,45 @@ class SadTalkerClient:
                     f"Cannot reach SadTalker service at {self._base_url}: {exc}"
                 ) from exc
 
-        if resp.status_code == 422:
+        if response.status_code == 422:
             raise SadTalkerUnavailable(
-                f"SadTalker rejected request for {character}: {resp.text}"
+                f"SadTalker rejected request for {character}: {response.text}"
             )
-        resp.raise_for_status()
-
+        response.raise_for_status()
         output_path.parent.mkdir(parents=True, exist_ok=True)
-        output_path.write_bytes(resp.content)
-        logger.info("SadTalker: wrote %d bytes to %s", len(resp.content), output_path)
+        output_path.write_bytes(response.content)
+        logger.info("SadTalker: wrote %d bytes to %s", len(response.content), output_path)
         return output_path
 
-    # ------------------------------------------------------------------
-    # Status helpers
-    # ------------------------------------------------------------------
+    def download_photo(self, character: str, output_path: Path) -> Path:
+        """Download the stored reference photo for listener/idle composition."""
+        try:
+            response = httpx.get(
+                f"{self._base_url}/v1/photos/{character}",
+                timeout=httpx.Timeout(30.0, connect=10.0),
+            )
+        except httpx.ConnectError as exc:
+            raise SadTalkerUnavailable(
+                f"Cannot reach SadTalker service at {self._base_url}: {exc}"
+            ) from exc
+        if response.status_code == 404:
+            raise SadTalkerUnavailable(f"No stored photo for {character}")
+        response.raise_for_status()
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(response.content)
+        return output_path
 
     def is_available(self) -> bool:
         try:
-            r = httpx.get(f"{self._base_url}/health", timeout=_STATUS_TIMEOUT)
-            return r.status_code == 200 and r.json().get("modelsReady", False)
+            response = httpx.get(f"{self._base_url}/health", timeout=_STATUS_TIMEOUT)
+            return response.status_code == 200 and response.json().get("modelsReady", False)
         except Exception:
             return False
 
     def photos_status(self) -> dict[str, bool]:
         try:
-            r = httpx.get(f"{self._base_url}/v1/photos/status", timeout=_STATUS_TIMEOUT)
-            data = r.json()
+            response = httpx.get(f"{self._base_url}/v1/photos/status", timeout=_STATUS_TIMEOUT)
+            data = response.json()
             return {
                 "bhaiya": bool(data.get("bhaiya")),
                 "chitti": bool(data.get("chitti")),
@@ -93,18 +90,14 @@ class SadTalkerClient:
         status = self.photos_status()
         return status.get("bhaiya", False) and status.get("chitti", False)
 
-    # ------------------------------------------------------------------
-    # Photo upload (called from the renderer's photo endpoint)
-    # ------------------------------------------------------------------
-
     def upload_photo(self, character: str, photo_path: Path) -> dict:
         ext = photo_path.suffix.lower()
-        ctype = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png"
-        with open(photo_path, "rb") as f:
-            resp = httpx.post(
+        content_type = "image/jpeg" if ext in (".jpg", ".jpeg") else "image/png"
+        with open(photo_path, "rb") as handle:
+            response = httpx.post(
                 f"{self._base_url}/v1/photos/{character}",
-                files={"photo": (photo_path.name, f, ctype)},
+                files={"photo": (photo_path.name, handle, content_type)},
                 timeout=30.0,
             )
-        resp.raise_for_status()
-        return resp.json()
+        response.raise_for_status()
+        return response.json()
