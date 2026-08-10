@@ -32,6 +32,39 @@ services:
     profiles:
       - ollama
 
+  # SadTalker worker — animates real character photos with lip-sync audio.
+  # Photos are stored once; every video generation reuses them with zero API calls.
+  # Model checkpoints (~4 GB) download on first start into the sadtalker_models volume.
+  # To skip: remove this service and set RENDER_MODE=static in the renderer.
+  sadtalker:
+    build:
+      context: ./renderer/sadtalker_worker
+      dockerfile: Dockerfile
+    container_name: whatsapp-bot-sadtalker
+    environment:
+      PHOTOS_DIR: /data/photos
+      SADTALKER_FACE_SIZE: ${SADTALKER_FACE_SIZE:-256}
+      SADTALKER_EXPRESSION_SCALE: ${SADTALKER_EXPRESSION_SCALE:-1.0}
+      SADTALKER_ENHANCER: ${SADTALKER_ENHANCER:-}
+      LOG_LEVEL: ${SADTALKER_LOG_LEVEL:-INFO}
+    ports:
+      - "${SADTALKER_PORT:-8091}:8091"
+    volumes:
+      - whatsapp_bot_photos:/data/photos
+      - whatsapp_bot_sadtalker_models:/opt/SadTalker/checkpoints
+      - whatsapp_bot_sadtalker_gfpgan:/opt/SadTalker/gfpgan/weights
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8091/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 30
+      start_period: 60s
+    networks:
+      - whatsapp_bot_net
+    restart: unless-stopped
+    profiles:
+      - sadtalker
+
   # Renderer worker — all video/image heavy lifting runs here, never in the main app.
   renderer:
     build:
@@ -49,6 +82,8 @@ services:
       VOICE_CHITTI: ${VOICE_CHITTI:-af_heart}
       MAX_RENDER_SECONDS: ${MAX_RENDER_SECONDS:-90}
       LOG_LEVEL: ${RENDERER_LOG_LEVEL:-INFO}
+      RENDER_MODE: ${RENDER_MODE:-auto}
+      SADTALKER_URL: http://sadtalker:8091
     ports:
       - "${RENDERER_PORT:-8090}:8090"
     volumes:
@@ -105,3 +140,6 @@ volumes:
   whatsapp_bot_renders:
   whatsapp_bot_character_pack:
   whatsapp_bot_kokoro_cache:
+  whatsapp_bot_photos:
+  whatsapp_bot_sadtalker_models:
+  whatsapp_bot_sadtalker_gfpgan:

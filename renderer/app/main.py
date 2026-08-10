@@ -59,14 +59,21 @@ class RenderResponse(BaseModel):
 
 @app.get("/health")
 def health() -> dict[str, Any]:
-    from .character_routes import _get_pack
+    from .character_routes import _get_pack, _sadtalker_client, RENDER_MODE
     pack = _get_pack()
+    st_available = _sadtalker_client.is_available()
+    photos = _sadtalker_client.photos_status() if st_available else {"bhaiya": False, "chitti": False}
     return {
         "status": "UP",
         "ffmpeg": shutil.which("ffmpeg") is not None,
         "renderRoot": str(RENDER_ROOT),
         "characterPackRoot": str(CHARACTER_PACK_ROOT),
         "characterPackReady": pack.is_ready() if pack else False,
+        "renderMode": RENDER_MODE,
+        "sadtalker": {
+            "available": st_available,
+            "photos": photos,
+        },
         "templates": sorted(engine.template_codes()),
     }
 
