@@ -27,6 +27,11 @@ public class TrendController {
         return ResponseEntity.ok(trendSignalRepository.findAllByTenantIdOrderByFinalScoreDesc(tenantId));
     }
 
+    @GetMapping("/providers")
+    public ResponseEntity<List<TrendDiscoveryService.ProviderStatus>> providers() {
+        return ResponseEntity.ok(trendDiscoveryService.providerStatuses());
+    }
+
     @PostMapping("/import")
     public ResponseEntity<TrendSignalEntity> importSignal(@AuthenticationPrincipal Claims claims,
                                                            @RequestBody ImportRequest request) {
@@ -45,15 +50,14 @@ public class TrendController {
         UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         TenantEntity tenant = tenantRepository.findById(tenantId)
                 .orElseThrow(() -> new IllegalArgumentException("Tenant not found: " + tenantId));
-        int count = request.count() > 0 ? Math.min(request.count(), 10) : 5;
-        List<TrendSignalEntity> discovered = trendDiscoveryService.discover(
+        int count = request.count() > 0 ? Math.min(request.count(), 20) : 8;
+        return ResponseEntity.ok(trendDiscoveryService.discover(
                 tenant,
-                request.industry() != null ? request.industry() : "General",
-                request.country() != null ? request.country() : "Global",
-                request.platformCode() != null ? request.platformCode() : "INSTAGRAM",
+                blankDefault(request.industry(), "General"),
+                blankDefault(request.country(), "AE"),
+                blankDefault(request.platformCode(), "INSTAGRAM"),
                 count
-        );
-        return ResponseEntity.ok(discovered);
+        ));
     }
 
     @GetMapping("/{id}/recommend")
@@ -62,12 +66,10 @@ public class TrendController {
         UUID tenantId = UUID.fromString((String) claims.get("tenantId"));
         return trendSignalRepository.findById(id)
                 .filter(t -> t.getTenant().getId().equals(tenantId))
-                .map(t -> ResponseEntity.ok(
-                        trendDiscoveryService.recommend(
-                                t.getKeyword() != null ? t.getKeyword() : t.getTopic(),
-                                t.getTopic(),
-                                t.getPlatformCode()
-                        )))
+                .map(t -> ResponseEntity.ok(trendDiscoveryService.recommend(
+                        t.getKeyword() != null ? t.getKeyword() : t.getTopic(),
+                        t.getTopic(),
+                        t.getPlatformCode())))
                 .orElse(ResponseEntity.notFound().build());
     }
 
@@ -82,9 +84,12 @@ public class TrendController {
         return ResponseEntity.noContent().build();
     }
 
+    private String blankDefault(String value, String fallback) {
+        return value == null || value.isBlank() ? fallback : value;
+    }
+
     record ImportRequest(String keyword, String hashtag, String topic,
                          String country, String industry, String platformCode, double rawScore) {}
 
     record DiscoverRequest(String industry, String country, String platformCode, int count) {}
 }
-

@@ -47,44 +47,11 @@ public class MediaAssetEntity {
     @JoinColumn(name = "uploaded_by")
     private TenantUserEntity uploadedBy;
 
-    // Object storage fields (V17)
-    @Column(name = "storage_provider", nullable = false, length = 100)
-    private String storageProvider = "LOCAL";
-
-    @Column(name = "bucket_name", length = 255)
-    private String bucketName;
-
-    @Column(name = "object_key")
-    private String objectKey;
-
-    @Column(name = "checksum_sha256", length = 128)
-    private String checksumSha256;
-
-    @Column(name = "visibility", nullable = false, length = 50)
-    private String visibility = "PRIVATE";
-
-    @Column(name = "status", nullable = false, length = 50)
-    private String status = "UPLOADED";
-
-    @ManyToOne(fetch = FetchType.LAZY)
-    @JoinColumn(name = "created_by")
-    private TenantUserEntity createdBy;
-
     @Column(name = "created_at", nullable = false)
     private LocalDateTime createdAt;
 
-    @Column(name = "updated_at", nullable = false)
-    private LocalDateTime updatedAt;
-
     @PrePersist
     void prePersist() {
-        LocalDateTime now = LocalDateTime.now();
-        createdAt = now;
-        updatedAt = now;
-    }
-
-    @PreUpdate
-    void preUpdate() {
-        updatedAt = LocalDateTime.now();
+        createdAt = LocalDateTime.now();
     }
 }

@@ -32,6 +32,40 @@ services:
     profiles:
       - ollama
 
+  # Renderer worker — all video/image heavy lifting runs here, never in the main app.
+  renderer:
+    build:
+      context: ./renderer
+      dockerfile: Dockerfile
+    container_name: whatsapp-bot-renderer
+    environment:
+      RENDER_ROOT: /data/renders
+      STORAGE_ROOT: /data/storage
+      CHARACTER_PACK_ROOT: /data/character_pack
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      KOKORO_LANG_CODE: ${KOKORO_LANG_CODE:-a}
+      KOKORO_DEFAULT_VOICE: ${KOKORO_DEFAULT_VOICE:-af_heart}
+      VOICE_BHAIYA: ${VOICE_BHAIYA:-am_liam}
+      VOICE_CHITTI: ${VOICE_CHITTI:-af_heart}
+      MAX_RENDER_SECONDS: ${MAX_RENDER_SECONDS:-90}
+      LOG_LEVEL: ${RENDERER_LOG_LEVEL:-INFO}
+    ports:
+      - "${RENDERER_PORT:-8090}:8090"
+    volumes:
+      - whatsapp_bot_storage:/data/storage:ro
+      - whatsapp_bot_renders:/data/renders
+      - whatsapp_bot_character_pack:/data/character_pack
+      - whatsapp_bot_kokoro_cache:/root/.cache
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8090/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 20s
+    networks:
+      - whatsapp_bot_net
+    restart: unless-stopped
+
   app:
     build:
       context: .
@@ -39,6 +73,8 @@ services:
     container_name: whatsapp-bot-app
     depends_on:
       postgres:
+        condition: service_healthy
+      renderer:
         condition: service_healthy
     env_file:
       - .env
@@ -48,8 +84,12 @@ services:
       DB_USERNAME: ${POSTGRES_USER:-whatsapp_bot}
       DB_PASSWORD: ${POSTGRES_PASSWORD:-whatsapp_bot}
       SERVER_PORT: 8080
+      VIDEO_RENDERER_BASE_URL: http://renderer:8090
+      VIDEO_RENDER_OUTPUT_DIR: /data/renders
     ports:
       - "${APP_PORT:-8080}:8080"
+    volumes:
+      - whatsapp_bot_renders:/data/renders
     networks:
       - whatsapp_bot_net
     restart: unless-stopped
@@ -61,3 +101,7 @@ networks:
 volumes:
   whatsapp_bot_pgdata:
   whatsapp_bot_ollama_data:
+  whatsapp_bot_storage:
+  whatsapp_bot_renders:
+  whatsapp_bot_character_pack:
+  whatsapp_bot_kokoro_cache:
