@@ -1,7 +1,6 @@
 package com.whatsappbot.video;
 
 import com.whatsappbot.video.dialogue.DialogueScript;
-import com.whatsappbot.video.dialogue.DialogueTurn;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Service;
@@ -54,19 +53,15 @@ public class MediaRendererClient {
         return new RenderResult(response.outputPath(), response.durationSeconds(), response.warnings());
     }
 
-    // ------------------------------------------------------------------
-    // Dialogue render — submitted to the renderer worker as a background job
-    // ------------------------------------------------------------------
-
     public void submitDialogueRender(
             String jobId, UUID tenantId, DialogueScript script, String outputPath
     ) {
         List<Map<String, Object>> turns = script.turns().stream()
-                .map(t -> Map.<String, Object>of(
-                        "speaker", t.speaker(),
-                        "emotion", t.emotion(),
-                        "text", t.text(),
-                        "duration_seconds", t.durationSeconds()
+                .map(turn -> Map.<String, Object>of(
+                        "speaker", turn.speaker(),
+                        "emotion", turn.emotion(),
+                        "text", turn.text(),
+                        "duration_seconds", turn.durationSeconds()
                 ))
                 .toList();
 
@@ -78,19 +73,29 @@ public class MediaRendererClient {
         );
 
         DialogueSubmitResponse response = restClient.post()
-                .uri("/v1/dialogue/render")
+                .uri("/v2/dialogue/render")
                 .body(request)
                 .retrieve()
                 .body(DialogueSubmitResponse.class);
 
-        log.info("Dialogue render submitted to worker. job={} status={}", jobId,
-                response != null ? response.status() : "null");
+        log.info("Dialogue render submitted. job={} status={} mode={}",
+                jobId,
+                response != null ? response.status() : "null",
+                response != null ? response.renderMode() : "unknown");
     }
 
     @SuppressWarnings("unchecked")
     public Map<String, Object> getDialogueRenderStatus(String jobId) {
         return restClient.get()
-                .uri("/v1/dialogue/render/{jobId}", jobId)
+                .uri("/v2/dialogue/render/{jobId}", jobId)
+                .retrieve()
+                .body(Map.class);
+    }
+
+    @SuppressWarnings("unchecked")
+    public Map<String, Object> getDialogueCapabilities() {
+        return restClient.get()
+                .uri("/v2/dialogue/capabilities")
                 .retrieve()
                 .body(Map.class);
     }
@@ -102,8 +107,6 @@ public class MediaRendererClient {
                 .retrieve()
                 .body(Map.class);
     }
-
-    // ------------------------------------------------------------------
 
     public boolean enabled() {
         return properties.isEnabled();
@@ -118,5 +121,5 @@ public class MediaRendererClient {
 
     public record RenderResult(String outputPath, double durationSeconds, List<String> warnings) {}
 
-    public record DialogueSubmitResponse(String jobId, String status) {}
+    public record DialogueSubmitResponse(String jobId, String status, String renderMode) {}
 }
