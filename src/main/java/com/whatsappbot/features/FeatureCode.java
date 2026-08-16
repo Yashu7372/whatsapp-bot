@@ -18,9 +18,12 @@ public final class FeatureCode {
     public static final String BYO_DOCUMENT_STORAGE      = "BYO_DOCUMENT_STORAGE";
     public static final String CUSTOMER_KMS              = "CUSTOMER_KMS";
 
-    // Settings module — these predate this class but weren't mirrored here yet; feature_catalog
-    // (V1__baseline.sql) is still the source of truth for the full catalog, this is just the
-    // Java-side constant so call sites don't hardcode the string.
+    // Enterprise Project Control
+    public static final String PROJECT_DELIVERY          = "PROJECT_DELIVERY";
+    public static final String PROJECT_TIME_LOG          = "PROJECT_TIME_LOG";
+
+    // Settings module — feature_catalog remains the source of truth for the full catalog; these
+    // constants simply prevent Java call sites from scattering feature-code string literals.
     public static final String SETTINGS_WEBHOOK          = "SETTINGS_WEBHOOK";
     public static final String SETTINGS_BOT              = "SETTINGS_BOT";
     public static final String SETTINGS_TEAM             = "SETTINGS_TEAM";
