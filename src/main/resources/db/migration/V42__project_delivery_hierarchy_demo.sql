@@ -1,0 +1,369 @@
+-- ============================================================================
+-- V42 - Generalized project delivery hierarchy + enterprise demonstration data
+--
+-- Documents, approvals, IPC, budgets and resources already exist as strong
+-- systems of record. This migration adds the missing navigation backbone:
+-- Project -> Stage -> Work Package -> Work Item. The hierarchy is intentionally
+-- generic: UAE construction stages are seeded as data, not hard-coded in Java.
+-- ============================================================================
+
+ALTER TABLE public.tenant_users ADD COLUMN IF NOT EXISTS job_title varchar(160);
+ALTER TABLE public.tenant_users ADD COLUMN IF NOT EXISTS department varchar(120);
+
+CREATE TABLE IF NOT EXISTS public.project_stages (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    project_id uuid NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    stage_code varchar(60) NOT NULL,
+    name varchar(220) NOT NULL,
+    stage_type varchar(80) NOT NULL DEFAULT 'DELIVERY',
+    sequence_no integer NOT NULL DEFAULT 0,
+    status varchar(40) NOT NULL DEFAULT 'NOT_STARTED',
+    progress_percent numeric(6,2) NOT NULL DEFAULT 0,
+    planned_start date,
+    planned_end date,
+    actual_start date,
+    actual_end date,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now(),
+    CONSTRAINT uk_project_stage_code UNIQUE(project_id, stage_code),
+    CONSTRAINT ck_project_stage_progress CHECK(progress_percent >= 0 AND progress_percent <= 100)
+);
+CREATE INDEX IF NOT EXISTS idx_project_stages_project ON public.project_stages(tenant_id,project_id,sequence_no);
+
+CREATE TABLE IF NOT EXISTS public.work_packages (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    project_id uuid NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    stage_id uuid NOT NULL REFERENCES public.project_stages(id) ON DELETE CASCADE,
+    package_code varchar(80) NOT NULL,
+    name varchar(260) NOT NULL,
+    discipline varchar(100),
+    status varchar(40) NOT NULL DEFAULT 'ACTIVE',
+    sort_order integer NOT NULL DEFAULT 0,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now(),
+    CONSTRAINT uk_work_package_code UNIQUE(project_id, package_code)
+);
+CREATE INDEX IF NOT EXISTS idx_work_packages_stage ON public.work_packages(tenant_id,project_id,stage_id,sort_order);
+
+CREATE TABLE IF NOT EXISTS public.work_items (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    project_id uuid NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    package_id uuid NOT NULL REFERENCES public.work_packages(id) ON DELETE CASCADE,
+    item_code varchar(100) NOT NULL,
+    name varchar(320) NOT NULL,
+    work_type varchar(80) NOT NULL DEFAULT 'ACTIVITY',
+    status varchar(40) NOT NULL DEFAULT 'NOT_STARTED',
+    priority varchar(20) NOT NULL DEFAULT 'NORMAL',
+    progress_percent numeric(6,2) NOT NULL DEFAULT 0,
+    responsible_organization_id uuid REFERENCES public.organizations(id) ON DELETE SET NULL,
+    budget_line_id uuid REFERENCES public.budget_lines(id) ON DELETE SET NULL,
+    budget_amount numeric(18,2) NOT NULL DEFAULT 0,
+    blocked_reason text,
+    planned_start date,
+    planned_end date,
+    actual_start date,
+    actual_end date,
+    sort_order integer NOT NULL DEFAULT 0,
+    created_at timestamp NOT NULL DEFAULT now(),
+    updated_at timestamp NOT NULL DEFAULT now(),
+    CONSTRAINT uk_work_item_code UNIQUE(project_id, item_code),
+    CONSTRAINT ck_work_item_progress CHECK(progress_percent >= 0 AND progress_percent <= 100),
+    CONSTRAINT ck_work_item_budget CHECK(budget_amount >= 0)
+);
+CREATE INDEX IF NOT EXISTS idx_work_items_package ON public.work_items(tenant_id,project_id,package_id,sort_order);
+CREATE INDEX IF NOT EXISTS idx_work_items_responsible_org ON public.work_items(responsible_organization_id,status);
+
+CREATE TABLE IF NOT EXISTS public.work_item_assignments (
+    id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+    tenant_id uuid NOT NULL REFERENCES public.tenants(id) ON DELETE CASCADE,
+    project_id uuid NOT NULL REFERENCES public.projects(id) ON DELETE CASCADE,
+    work_item_id uuid NOT NULL REFERENCES public.work_items(id) ON DELETE CASCADE,
+    organization_id uuid NOT NULL REFERENCES public.organizations(id) ON DELETE CASCADE,
+    user_id uuid NOT NULL REFERENCES public.tenant_users(id) ON DELETE CASCADE,
+    responsibility varchar(120) NOT NULL DEFAULT 'CONTRIBUTOR',
+    active boolean NOT NULL DEFAULT true,
+    sort_order integer NOT NULL DEFAULT 0,
+    created_at timestamp NOT NULL DEFAULT now(),
+    CONSTRAINT uk_work_item_assignment UNIQUE(work_item_id,user_id,responsibility)
+);
+CREATE INDEX IF NOT EXISTS idx_work_item_assignments_item ON public.work_item_assignments(tenant_id,work_item_id,active);
+CREATE INDEX IF NOT EXISTS idx_work_item_assignments_user ON public.work_item_assignments(tenant_id,user_id,active);
+
+ALTER TABLE public.documents ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public.work_items(id) ON DELETE SET NULL;
+ALTER TABLE public.timesheets ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public.work_items(id) ON DELETE SET NULL;
+ALTER TABLE public.actual_cost_entries ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public.work_items(id) ON DELETE SET NULL;
+ALTER TABLE public.equipment_usage ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public.work_items(id) ON DELETE SET NULL;
+ALTER TABLE public.project_commitments ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public.work_items(id) ON DELETE SET NULL;
+ALTER TABLE public.material_receipts ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public.work_items(id) ON DELETE SET NULL;
+ALTER TABLE public.project_variations ADD COLUMN IF NOT EXISTS work_item_id uuid REFERENCES public.work_items(id) ON DELETE SET NULL;
+
+CREATE INDEX IF NOT EXISTS idx_documents_work_item ON public.documents(work_item_id) WHERE work_item_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_timesheets_work_item ON public.timesheets(work_item_id) WHERE work_item_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_actual_cost_work_item ON public.actual_cost_entries(work_item_id) WHERE work_item_id IS NOT NULL;
+
+INSERT INTO public.feature_catalog(feature_code,module,nav_section,nav_label,nav_icon,route,min_role,is_core,sort_order,created_at)
+VALUES('PROJECT_DELIVERY','PROJECT_CONTROL','DELIVERY','Projects','FolderKanban','/control/projects','VIEWER',true,5,now())
+ON CONFLICT(feature_code) DO UPDATE SET nav_label=excluded.nav_label,nav_icon=excluded.nav_icon,route=excluded.route,is_core=true,sort_order=excluded.sort_order;
+
+INSERT INTO public.feature_api_path(feature_code,path_pattern)
+VALUES('PROJECT_DELIVERY','^/api/v1/project-delivery')
+ON CONFLICT(path_pattern) DO UPDATE SET feature_code=excluded.feature_code;
+
+INSERT INTO public.role_permissions(role,feature_code,action,allowed) VALUES
+ ('ADMIN','PROJECT_DELIVERY','VIEW',true),('MANAGER','PROJECT_DELIVERY','VIEW',true),
+ ('REVIEWER','PROJECT_DELIVERY','VIEW',true),('VIEWER','PROJECT_DELIVERY','VIEW',true),
+ ('ADMIN','PROJECT_DELIVERY','MANAGE',true),('MANAGER','PROJECT_DELIVERY','MANAGE',true),
+ ('REVIEWER','PROJECT_DELIVERY','MANAGE',false),('VIEWER','PROJECT_DELIVERY','MANAGE',false)
+ON CONFLICT(role,feature_code,action) DO UPDATE SET allowed=excluded.allowed;
+
+-- --------------------------------------------------------------------------
+-- Demonstration account. All identities use the existing demo password
+-- 'admin123'. Access role remains ADMIN/MANAGER/REVIEWER/VIEWER; real-world
+-- professions such as Architect, Quantity Surveyor and Accountant are metadata.
+-- --------------------------------------------------------------------------
+DO $$
+DECLARE
+    t uuid;
+    pwd varchar := '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY.5AEfAxwd6O3.';
+BEGIN
+    SELECT id INTO t FROM public.tenants WHERE tenant_code='DEMO' LIMIT 1;
+    IF t IS NULL THEN RETURN; END IF;
+
+    UPDATE public.tenants SET business_name='Aurelia Developments PJSC', updated_at=now() WHERE id=t;
+
+    -- Companies
+    INSERT INTO public.organizations(id,tenant_id,name,org_code,contact_email,active) VALUES
+      ('10000000-0000-0000-0000-000000000001',t,'Aurelia Developments PJSC','AURELIA','projects@aurelia.demo',true),
+      ('10000000-0000-0000-0000-000000000002',t,'Meridian Engineering Consultants','MEC','control@meridian.demo',true),
+      ('10000000-0000-0000-0000-000000000003',t,'GulfBuild Contracting LLC','GBC','projects@gulfbuild.demo',true),
+      ('10000000-0000-0000-0000-000000000004',t,'Apex MEP Services LLC','APEX','projects@apexmep.demo',true),
+      ('10000000-0000-0000-0000-000000000005',t,'Skyline Facades LLC','SKY','projects@skyline.demo',true),
+      ('10000000-0000-0000-0000-000000000006',t,'Prism Architects & Engineers','PRISM','studio@prism.demo',true),
+      ('10000000-0000-0000-0000-000000000007',t,'Vertex Interiors LLC','VERTEX','projects@vertex.demo',true)
+    ON CONFLICT DO NOTHING;
+
+    -- Users / professions. Same four access roles, different business responsibilities.
+    INSERT INTO public.tenant_users(id,tenant_id,email,password_hash,full_name,role,organization_id,job_title,department,active) VALUES
+      ('40000000-0000-0000-0000-000000000001',t,'enterprise.admin@aurelia.demo',pwd,'Omar Al Mansoori','ADMIN',NULL,'Platform Administrator','Digital Delivery',true),
+      ('40000000-0000-0000-0000-000000000002',t,'director@aurelia.demo',pwd,'Layla Al Hashimi','MANAGER','10000000-0000-0000-0000-000000000001','Projects Director','Development',true),
+      ('40000000-0000-0000-0000-000000000003',t,'finance@aurelia.demo',pwd,'Nadia Rahman','MANAGER','10000000-0000-0000-0000-000000000001','Finance Manager','Finance',true),
+      ('40000000-0000-0000-0000-000000000004',t,'client.dc@aurelia.demo',pwd,'Sara Khan','REVIEWER','10000000-0000-0000-0000-000000000001','Document Controller','Project Controls',true),
+      ('40000000-0000-0000-0000-000000000005',t,'client.audit@aurelia.demo',pwd,'Yousef Ibrahim','VIEWER','10000000-0000-0000-0000-000000000001','Internal Auditor','Governance',true),
+      ('40000000-0000-0000-0000-000000000006',t,'design.manager@meridian.demo',pwd,'Amal Faris','MANAGER','10000000-0000-0000-0000-000000000002','Design Manager','Design',true),
+      ('40000000-0000-0000-0000-000000000007',t,'resident.engineer@meridian.demo',pwd,'Hassan Nasser','REVIEWER','10000000-0000-0000-0000-000000000002','Resident Engineer','Supervision',true),
+      ('40000000-0000-0000-0000-000000000008',t,'qs@meridian.demo',pwd,'Maya Joseph','MANAGER','10000000-0000-0000-0000-000000000002','Senior Quantity Surveyor','Commercial',true),
+      ('40000000-0000-0000-0000-000000000009',t,'mep.engineer@meridian.demo',pwd,'Ravi Menon','REVIEWER','10000000-0000-0000-0000-000000000002','MEP Engineer','MEP',true),
+      ('40000000-0000-0000-0000-00000000000a',t,'consultant.dc@meridian.demo',pwd,'Fatima Noor','REVIEWER','10000000-0000-0000-0000-000000000002','Document Controller','Project Controls',true),
+      ('40000000-0000-0000-0000-00000000000b',t,'pm@gulfbuild.demo',pwd,'Khalid Saeed','MANAGER','10000000-0000-0000-0000-000000000003','Project Manager','Construction',true),
+      ('40000000-0000-0000-0000-00000000000c',t,'site.engineer@gulfbuild.demo',pwd,'Arjun Patel','REVIEWER','10000000-0000-0000-0000-000000000003','Site Engineer','Construction',true),
+      ('40000000-0000-0000-0000-00000000000d',t,'qaqc@gulfbuild.demo',pwd,'Mohammed Tariq','REVIEWER','10000000-0000-0000-0000-000000000003','QA/QC Engineer','Quality',true),
+      ('40000000-0000-0000-0000-00000000000e',t,'foreman@gulfbuild.demo',pwd,'Bilal Ahmed','VIEWER','10000000-0000-0000-0000-000000000003','General Foreman','Construction',true),
+      ('40000000-0000-0000-0000-00000000000f',t,'commercial@gulfbuild.demo',pwd,'Elena George','MANAGER','10000000-0000-0000-0000-000000000003','Commercial Manager','Commercial',true),
+      ('40000000-0000-0000-0000-000000000010',t,'mep.manager@apex.demo',pwd,'Sameer Ali','MANAGER','10000000-0000-0000-0000-000000000004','MEP Construction Manager','MEP',true),
+      ('40000000-0000-0000-0000-000000000011',t,'mep.supervisor@apex.demo',pwd,'Naveen Kumar','REVIEWER','10000000-0000-0000-0000-000000000004','HVAC Supervisor','MEP',true),
+      ('40000000-0000-0000-0000-000000000012',t,'mep.worker@apex.demo',pwd,'Imran Shah','VIEWER','10000000-0000-0000-0000-000000000004','HVAC Technician','MEP',true),
+      ('40000000-0000-0000-0000-000000000013',t,'facade.manager@skyline.demo',pwd,'Chen Wei','MANAGER','10000000-0000-0000-0000-000000000005','Facade Manager','Facade',true),
+      ('40000000-0000-0000-0000-000000000014',t,'architect@prism.demo',pwd,'Aisha Mathew','REVIEWER','10000000-0000-0000-0000-000000000006','Lead Architect','Architecture',true),
+      ('40000000-0000-0000-0000-000000000015',t,'interiors@vertex.demo',pwd,'Daniel Cruz','MANAGER','10000000-0000-0000-0000-000000000007','Interior Fit-out Manager','Interiors',true)
+    ON CONFLICT(email) DO UPDATE SET job_title=excluded.job_title,department=excluded.department,organization_id=excluded.organization_id;
+
+    -- Client portfolio
+    INSERT INTO public.projects(id,tenant_id,name,project_code,description,contract_value,currency,retention_percent,status,start_date,end_date) VALUES
+      ('20000000-0000-0000-0000-000000000001',t,'Aurelia Creek Residences','AUR-CRK','Two residential towers, podium and waterfront public realm. Showcase project for connected design, authority, construction and commercial control.',420000000,'AED',10,'ACTIVE','2025-09-01','2028-03-31'),
+      ('20000000-0000-0000-0000-000000000002',t,'Aurelia Business District Tower','AUR-BDT','Grade-A commercial tower with retail podium and integrated transport interface.',680000000,'AED',10,'ACTIVE','2026-01-15','2029-06-30'),
+      ('20000000-0000-0000-0000-000000000003',t,'Aurelia Marina Hotel','AUR-MAR','Luxury hotel, serviced apartments and marina-facing landscape works.',310000000,'AED',10,'ACTIVE','2025-11-01','2028-12-15')
+    ON CONFLICT DO NOTHING;
+
+    -- Participants; subcontractors are explicitly engaged beneath the main contractor.
+    INSERT INTO public.project_participants(id,tenant_id,project_id,organization_id,party_role,parent_participant_id,active) VALUES
+      ('30000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','CLIENT',NULL,true),
+      ('30000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','CONSULTANT',NULL,true),
+      ('30000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000003','CONTRACTOR',NULL,true),
+      ('30000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004','SUBCONTRACTOR','30000000-0000-0000-0000-000000000003',true),
+      ('30000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000005','SUBCONTRACTOR','30000000-0000-0000-0000-000000000003',true),
+      ('30000000-0000-0000-0000-000000000006',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000006','CONSULTANT',NULL,true),
+      ('30000000-0000-0000-0000-000000000007',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000007','SUBCONTRACTOR','30000000-0000-0000-0000-000000000003',true),
+      ('30000000-0000-0000-0000-000000000008',t,'20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000001','CLIENT',NULL,true),
+      ('30000000-0000-0000-0000-000000000009',t,'20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000002','CONSULTANT',NULL,true),
+      ('30000000-0000-0000-0000-00000000000a',t,'20000000-0000-0000-0000-000000000002','10000000-0000-0000-0000-000000000003','CONTRACTOR',NULL,true),
+      ('30000000-0000-0000-0000-00000000000b',t,'20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000001','CLIENT',NULL,true),
+      ('30000000-0000-0000-0000-00000000000c',t,'20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000002','CONSULTANT',NULL,true),
+      ('30000000-0000-0000-0000-00000000000d',t,'20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000003','CONTRACTOR',NULL,true),
+      ('30000000-0000-0000-0000-00000000000e',t,'20000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000007','SUBCONTRACTOR','30000000-0000-0000-0000-00000000000d',true)
+    ON CONFLICT DO NOTHING;
+
+    -- Contract layer used by existing Project Controls.
+    INSERT INTO public.project_contracts(id,tenant_id,project_id,participant_id,contract_ref,commercial_model,original_value,approved_variations,currency,start_date,end_date,status) VALUES
+      ('31000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000002','CRK-CONS-001','PERCENTAGE',16800000,850000,'AED','2025-07-15','2028-06-30','ACTIVE'),
+      ('31000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000003','CRK-MC-001','FIXED_FEE',326000000,8200000,'AED','2026-02-01','2028-03-31','ACTIVE'),
+      ('31000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000004','CRK-MEP-001','FIXED_FEE',62000000,2100000,'AED','2026-04-01','2028-01-31','ACTIVE'),
+      ('31000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','30000000-0000-0000-0000-000000000005','CRK-FAC-001','FIXED_FEE',38500000,600000,'AED','2026-06-01','2028-01-31','ACTIVE'),
+      ('31000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000002','30000000-0000-0000-0000-000000000009','BDT-CONS-001','PERCENTAGE',24400000,0,'AED','2025-12-01','2029-08-31','ACTIVE'),
+      ('31000000-0000-0000-0000-000000000006',t,'20000000-0000-0000-0000-000000000003','30000000-0000-0000-0000-00000000000c','MAR-CONS-001','PERCENTAGE',13200000,350000,'AED','2025-09-15','2029-02-28','ACTIVE')
+    ON CONFLICT DO NOTHING;
+
+    -- UAE-style lifecycle is configuration data. Smaller projects can omit/collapse stages.
+    INSERT INTO public.project_stages(id,tenant_id,project_id,stage_code,name,stage_type,sequence_no,status,progress_percent,planned_start,planned_end,actual_start,actual_end) VALUES
+      ('50000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','FEAS','Feasibility & Brief','DESIGN',1,'COMPLETED',100,'2025-09-01','2025-10-15','2025-09-01','2025-10-08'),
+      ('50000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','CONCEPT','Concept Design','DESIGN',2,'COMPLETED',100,'2025-10-01','2025-12-15','2025-10-09','2025-12-20'),
+      ('50000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','DETAIL','Detailed Design','DESIGN',3,'IN_PROGRESS',88,'2025-12-01','2026-08-31','2025-12-21',NULL),
+      ('50000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','AUTH','Authority Approvals','AUTHORITY',4,'IN_PROGRESS',70,'2026-01-15','2026-09-30','2026-01-20',NULL),
+      ('50000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000001','PROC','Tender & Procurement','PROCUREMENT',5,'COMPLETED',100,'2025-11-15','2026-03-31','2025-11-20','2026-04-05'),
+      ('50000000-0000-0000-0000-000000000006',t,'20000000-0000-0000-0000-000000000001','CONST','Construction','EXECUTION',6,'IN_PROGRESS',42,'2026-03-01','2027-12-31','2026-03-10',NULL),
+      ('50000000-0000-0000-0000-000000000007',t,'20000000-0000-0000-0000-000000000001','TNC','Testing & Commissioning','COMMISSIONING',7,'NOT_STARTED',0,'2027-08-01','2028-01-31',NULL,NULL),
+      ('50000000-0000-0000-0000-000000000008',t,'20000000-0000-0000-0000-000000000001','HAND','Handover','HANDOVER',8,'NOT_STARTED',0,'2028-01-01','2028-03-31',NULL,NULL),
+      ('50000000-0000-0000-0000-000000000011',t,'20000000-0000-0000-0000-000000000002','DES','Design & Authority','DESIGN',1,'IN_PROGRESS',61,'2026-01-15','2027-01-31','2026-01-15',NULL),
+      ('50000000-0000-0000-0000-000000000012',t,'20000000-0000-0000-0000-000000000002','PROC','Procurement','PROCUREMENT',2,'IN_PROGRESS',34,'2026-08-01','2027-06-30','2026-08-01',NULL),
+      ('50000000-0000-0000-0000-000000000013',t,'20000000-0000-0000-0000-000000000002','CONST','Construction','EXECUTION',3,'IN_PROGRESS',14,'2026-07-01','2029-01-31','2026-07-12',NULL),
+      ('50000000-0000-0000-0000-000000000014',t,'20000000-0000-0000-0000-000000000002','HAND','Commissioning & Handover','HANDOVER',4,'NOT_STARTED',0,'2029-01-01','2029-06-30',NULL,NULL),
+      ('50000000-0000-0000-0000-000000000021',t,'20000000-0000-0000-0000-000000000003','DES','Design & Authority','DESIGN',1,'IN_PROGRESS',76,'2025-11-01','2026-10-31','2025-11-01',NULL),
+      ('50000000-0000-0000-0000-000000000022',t,'20000000-0000-0000-0000-000000000003','CONST','Construction','EXECUTION',2,'IN_PROGRESS',27,'2026-04-01','2028-07-31','2026-04-05',NULL),
+      ('50000000-0000-0000-0000-000000000023',t,'20000000-0000-0000-0000-000000000003','FIT','Fit-out & FF&E','EXECUTION',3,'NOT_STARTED',0,'2027-01-01','2028-08-31',NULL,NULL),
+      ('50000000-0000-0000-0000-000000000024',t,'20000000-0000-0000-0000-000000000003','HAND','Commissioning & Handover','HANDOVER',4,'NOT_STARTED',0,'2028-08-01','2028-12-15',NULL,NULL)
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.work_packages(id,tenant_id,project_id,stage_id,package_code,name,discipline,status,sort_order) VALUES
+      ('60000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000001','BRIEF','Client Information & Project Brief','Project Management','CLOSED',1),
+      ('60000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000002','ARCH-CON','Architectural Concept','Architecture','CLOSED',1),
+      ('60000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000003','ARCH-DD','Architectural Detailed Design','Architecture','ACTIVE',1),
+      ('60000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000003','MEP-DD','MEP Detailed Design & Coordination','MEP','ACTIVE',2),
+      ('60000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000004','NOC','Authority NOCs & Permits','Authority','ACTIVE',1),
+      ('60000000-0000-0000-0000-000000000006',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000006','STRUCT','Substructure & Superstructure','Structural','ACTIVE',1),
+      ('60000000-0000-0000-0000-000000000007',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000006','MEP-INST','MEP Installation','MEP','ACTIVE',2),
+      ('60000000-0000-0000-0000-000000000008',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000006','FACADE','Facade Works','Facade','ACTIVE',3),
+      ('60000000-0000-0000-0000-000000000009',t,'20000000-0000-0000-0000-000000000001','50000000-0000-0000-0000-000000000006','INTERIOR','Interior Fit-out','Interiors','ACTIVE',4),
+      ('60000000-0000-0000-0000-000000000011',t,'20000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-000000000011','BDT-DES','Tower Design Coordination','Multidiscipline','ACTIVE',1),
+      ('60000000-0000-0000-0000-000000000012',t,'20000000-0000-0000-0000-000000000002','50000000-0000-0000-0000-000000000013','BDT-BASE','Basement & Core','Structural','ACTIVE',1),
+      ('60000000-0000-0000-0000-000000000021',t,'20000000-0000-0000-0000-000000000003','50000000-0000-0000-0000-000000000021','MAR-DES','Hotel Design Coordination','Multidiscipline','ACTIVE',1),
+      ('60000000-0000-0000-0000-000000000022',t,'20000000-0000-0000-0000-000000000003','50000000-0000-0000-0000-000000000022','MAR-STRUCT','Hotel Structure','Structural','ACTIVE',1)
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.work_items(id,tenant_id,project_id,package_id,item_code,name,work_type,status,priority,progress_percent,responsible_organization_id,budget_amount,blocked_reason,planned_start,planned_end,actual_start,actual_end,sort_order) VALUES
+      ('70000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001','BR-001','Collect client requirements, surveys and plot information','DELIVERABLE','COMPLETED','HIGH',100,'10000000-0000-0000-0000-000000000002',650000,NULL,'2025-09-01','2025-09-25','2025-09-01','2025-09-22',1),
+      ('70000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000001','BR-002','Consultant sufficiency review and brief sign-off','REVIEW_GATE','COMPLETED','HIGH',100,'10000000-0000-0000-0000-000000000002',240000,NULL,'2025-09-20','2025-10-10','2025-09-23','2025-10-08',2),
+      ('70000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000002','AR-101','Prepare architectural concept design','DESIGN_ACTIVITY','COMPLETED','HIGH',100,'10000000-0000-0000-0000-000000000006',2100000,NULL,'2025-10-09','2025-11-25','2025-10-09','2025-11-28',1),
+      ('70000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000002','AR-102','Client concept review and confirmation','CLIENT_APPROVAL','COMPLETED','HIGH',100,'10000000-0000-0000-0000-000000000001',350000,NULL,'2025-11-26','2025-12-15','2025-11-29','2025-12-20',2),
+      ('70000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000003','AR-201','Issue coordinated architectural IFC package','DELIVERABLE','IN_PROGRESS','HIGH',86,'10000000-0000-0000-0000-000000000002',4200000,NULL,'2026-02-01','2026-08-20','2026-02-01',NULL,1),
+      ('70000000-0000-0000-0000-000000000006',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000004','ME-201','Coordinate HVAC, electrical and plumbing design','DESIGN_ACTIVITY','IN_PROGRESS','HIGH',82,'10000000-0000-0000-0000-000000000002',5600000,NULL,'2026-01-15','2026-08-31','2026-01-15',NULL,1),
+      ('70000000-0000-0000-0000-000000000007',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000005','AU-101','Dubai Municipality building permit close-out','AUTHORITY_SUBMISSION','IN_PROGRESS','CRITICAL',78,'10000000-0000-0000-0000-000000000002',900000,NULL,'2026-01-20','2026-08-31','2026-01-20',NULL,1),
+      ('70000000-0000-0000-0000-000000000008',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000005','AU-102','Civil Defence fire & life safety NOC','AUTHORITY_SUBMISSION','BLOCKED','CRITICAL',55,'10000000-0000-0000-0000-000000000002',720000,'Awaiting revised smoke-control calculation and coordinated shaft drawing before Civil Defence resubmission.','2026-03-01','2026-08-15','2026-03-01',NULL,2),
+      ('70000000-0000-0000-0000-000000000009',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000006','ST-301','Tower A Level 08 slab and vertical elements','CONSTRUCTION_ACTIVITY','IN_PROGRESS','HIGH',68,'10000000-0000-0000-0000-000000000003',18500000,NULL,'2026-06-15','2026-09-15','2026-06-16',NULL,1),
+      ('70000000-0000-0000-0000-00000000000a',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000007','ME-301','Level 05 HVAC duct installation and inspection','CONSTRUCTION_ACTIVITY','BLOCKED','CRITICAL',62,'10000000-0000-0000-0000-000000000004',6800000,'Inspection IR-234 returned with comments: fire damper access clearance must be corrected before reinspection.','2026-07-01','2026-08-28','2026-07-02',NULL,1),
+      ('70000000-0000-0000-0000-00000000000b',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000008','FA-301','Tower A facade performance mock-up','INSPECTION','IN_REVIEW','HIGH',74,'10000000-0000-0000-0000-000000000005',2400000,NULL,'2026-07-10','2026-08-22','2026-07-10',NULL,1),
+      ('70000000-0000-0000-0000-00000000000c',t,'20000000-0000-0000-0000-000000000001','60000000-0000-0000-0000-000000000009','IN-301','Podium lobby material selection','MATERIAL_APPROVAL','IN_REVIEW','NORMAL',45,'10000000-0000-0000-0000-000000000007',1800000,NULL,'2026-07-15','2026-09-10','2026-07-15',NULL,1),
+      ('70000000-0000-0000-0000-000000000011',t,'20000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000011','BD-101','Resolve core geometry and authority comments','DESIGN_ACTIVITY','IN_PROGRESS','HIGH',61,'10000000-0000-0000-0000-000000000002',7400000,NULL,'2026-03-01','2026-09-30','2026-03-01',NULL,1),
+      ('70000000-0000-0000-0000-000000000012',t,'20000000-0000-0000-0000-000000000002','60000000-0000-0000-0000-000000000012','BD-301','Basement raft and core construction','CONSTRUCTION_ACTIVITY','IN_PROGRESS','HIGH',14,'10000000-0000-0000-0000-000000000003',46500000,NULL,'2026-07-01','2027-02-28','2026-07-12',NULL,1),
+      ('70000000-0000-0000-0000-000000000021',t,'20000000-0000-0000-0000-000000000003','60000000-0000-0000-0000-000000000021','MH-101','Hotel room prototype design coordination','DESIGN_ACTIVITY','IN_PROGRESS','HIGH',76,'10000000-0000-0000-0000-000000000002',3900000,NULL,'2026-02-01','2026-09-15','2026-02-01',NULL,1),
+      ('70000000-0000-0000-0000-000000000022',t,'20000000-0000-0000-0000-000000000003','60000000-0000-0000-0000-000000000022','MH-301','Podium structural frame','CONSTRUCTION_ACTIVITY','IN_PROGRESS','HIGH',27,'10000000-0000-0000-0000-000000000003',32000000,NULL,'2026-04-15','2027-01-15','2026-04-16',NULL,1)
+    ON CONFLICT DO NOTHING;
+
+    -- Assignment chain shows professions separately from access permissions.
+    INSERT INTO public.work_item_assignments(id,tenant_id,project_id,work_item_id,organization_id,user_id,responsibility,sort_order,active) VALUES
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000002','CLIENT_SPONSOR',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000006','RESPONSIBLE_MANAGER',2,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000003','10000000-0000-0000-0000-000000000006','40000000-0000-0000-0000-000000000014','LEAD_ARCHITECT',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000004','10000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000002','APPROVER',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000005','10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000006','DESIGN_MANAGER',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000005','10000000-0000-0000-0000-000000000006','40000000-0000-0000-0000-000000000014','LEAD_ARCHITECT',2,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000006','10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000009','MEP_ENGINEER',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000008','10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000007','ENGINEER_REVIEW',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000009','10000000-0000-0000-0000-000000000003','40000000-0000-0000-0000-00000000000b','PROJECT_MANAGER',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000009','10000000-0000-0000-0000-000000000003','40000000-0000-0000-0000-00000000000c','SITE_ENGINEER',2,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-00000000000a','10000000-0000-0000-0000-000000000004','40000000-0000-0000-0000-000000000010','MEP_MANAGER',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-00000000000a','10000000-0000-0000-0000-000000000004','40000000-0000-0000-0000-000000000011','SUPERVISOR',2,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-00000000000a','10000000-0000-0000-0000-000000000004','40000000-0000-0000-0000-000000000012','TECHNICIAN',3,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-00000000000a','10000000-0000-0000-0000-000000000002','40000000-0000-0000-0000-000000000007','CONSULTANT_INSPECTOR',4,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-00000000000b','10000000-0000-0000-0000-000000000005','40000000-0000-0000-0000-000000000013','FACADE_MANAGER',1,true),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-00000000000c','10000000-0000-0000-0000-000000000007','40000000-0000-0000-0000-000000000015','FITOUT_MANAGER',1,true)
+    ON CONFLICT DO NOTHING;
+
+    -- Cost-code budget for showcase project; existing Project Controls consumes this unchanged.
+    INSERT INTO public.budget_versions(id,tenant_id,project_id,version_no,label,status,effective_date,created_by,organization_id) VALUES
+      ('80000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001',1,'Approved Control Budget','APPROVED','2026-04-01','40000000-0000-0000-0000-000000000001',NULL)
+    ON CONFLICT DO NOTHING;
+    INSERT INTO public.budget_lines(id,tenant_id,project_id,budget_version_id,cost_code,name,original_budget,approved_changes,committed_cost,actual_cost,estimate_to_complete,sort_order) VALUES
+      ('81000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','80000000-0000-0000-0000-000000000001','01-DES','Design & Consultancy',26000000,1200000,19400000,0,5600000,1),
+      ('81000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','80000000-0000-0000-0000-000000000001','02-STR','Structure',112000000,3200000,105000000,0,71200000,2),
+      ('81000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','80000000-0000-0000-0000-000000000001','03-MEP','MEP',82000000,2600000,72100000,0,58500000,3),
+      ('81000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','80000000-0000-0000-0000-000000000001','04-FAC','Facade',46500000,900000,41800000,0,36700000,4),
+      ('81000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000001','80000000-0000-0000-0000-000000000001','05-INT','Interiors & External',118000000,1500000,69300000,0,103000000,5)
+    ON CONFLICT DO NOTHING;
+
+    UPDATE public.work_items SET budget_line_id='81000000-0000-0000-0000-000000000001' WHERE id IN
+      ('70000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000002','70000000-0000-0000-0000-000000000003','70000000-0000-0000-0000-000000000004','70000000-0000-0000-0000-000000000005','70000000-0000-0000-0000-000000000006','70000000-0000-0000-0000-000000000007','70000000-0000-0000-0000-000000000008');
+    UPDATE public.work_items SET budget_line_id='81000000-0000-0000-0000-000000000002' WHERE id='70000000-0000-0000-0000-000000000009';
+    UPDATE public.work_items SET budget_line_id='81000000-0000-0000-0000-000000000003' WHERE id='70000000-0000-0000-0000-00000000000a';
+    UPDATE public.work_items SET budget_line_id='81000000-0000-0000-0000-000000000004' WHERE id='70000000-0000-0000-0000-00000000000b';
+    UPDATE public.work_items SET budget_line_id='81000000-0000-0000-0000-000000000005' WHERE id='70000000-0000-0000-0000-00000000000c';
+
+    INSERT INTO public.forecast_snapshots(id,tenant_id,project_id,source_organization_id,snapshot_date,forecast_final_cost,estimate_to_complete,physical_progress_percent,schedule_progress_percent,notes,created_by) VALUES
+      ('82000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','2026-05-31',416500000,312000000,29,31,'Design broadly aligned; authority approvals remain primary schedule risk.','40000000-0000-0000-0000-000000000008'),
+      ('82000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','2026-06-30',421800000,304000000,34,35,'MEP coordination and early structural productivity pressure forecast.','40000000-0000-0000-0000-000000000008'),
+      ('82000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','2026-07-31',428400000,296000000,39,37,'Civil Defence resubmission and MEP rework create forecast pressure.','40000000-0000-0000-0000-000000000008'),
+      ('82000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','2026-08-15',432100000,291500000,42,39,'Current control forecast; focus on HVAC inspection recovery and facade approval.','40000000-0000-0000-0000-000000000008')
+    ON CONFLICT DO NOTHING;
+
+    -- People/resources and rates.
+    INSERT INTO public.project_resources(id,tenant_id,project_id,organization_id,resource_type,resource_code,display_name,user_id,active) VALUES
+      ('90000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000006','PERSON','PR-ARCH-01','Aisha Mathew','40000000-0000-0000-0000-000000000014',true),
+      ('90000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','PERSON','MEC-MEP-01','Ravi Menon','40000000-0000-0000-0000-000000000009',true),
+      ('90000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000003','PERSON','GBC-SE-01','Arjun Patel','40000000-0000-0000-0000-00000000000c',true),
+      ('90000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004','PERSON','APEX-SUP-01','Naveen Kumar','40000000-0000-0000-0000-000000000011',true),
+      ('90000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004','PERSON','APEX-TECH-01','Imran Shah','40000000-0000-0000-0000-000000000012',true),
+      ('90000000-0000-0000-0000-000000000006',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000003','EQUIPMENT','GBC-TC-01','Tower Crane TC-01',NULL,true)
+    ON CONFLICT DO NOTHING;
+    INSERT INTO public.resource_rates(id,tenant_id,project_id,resource_id,rate_type,rate_amount,currency,effective_from) VALUES
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','90000000-0000-0000-0000-000000000001','HOURLY',420,'AED','2025-09-01'),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','90000000-0000-0000-0000-000000000002','HOURLY',360,'AED','2025-09-01'),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','90000000-0000-0000-0000-000000000003','HOURLY',190,'AED','2026-03-01'),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','90000000-0000-0000-0000-000000000004','HOURLY',150,'AED','2026-05-01'),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','90000000-0000-0000-0000-000000000005','HOURLY',95,'AED','2026-05-01'),
+      (gen_random_uuid(),t,'20000000-0000-0000-0000-000000000001','90000000-0000-0000-0000-000000000006','DAILY',4200,'AED','2026-03-01')
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.timesheets(id,tenant_id,project_id,organization_id,resource_id,work_item_id,work_date,hours,status,description,approved_by,approved_at,created_by) VALUES
+      ('91000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000006','90000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000005','2026-08-10',8,'APPROVED','IFC drawing coordination and client comment closure','40000000-0000-0000-0000-000000000006','2026-08-11','40000000-0000-0000-0000-000000000014'),
+      ('91000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','90000000-0000-0000-0000-000000000002','70000000-0000-0000-0000-000000000006','2026-08-11',9,'APPROVED','MEP clash review and coordinated services response','40000000-0000-0000-0000-000000000006','2026-08-12','40000000-0000-0000-0000-000000000009'),
+      ('91000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000003','90000000-0000-0000-0000-000000000003','70000000-0000-0000-0000-000000000009','2026-08-12',10,'APPROVED','Level 08 slab pour readiness and site coordination','40000000-0000-0000-0000-00000000000b','2026-08-13','40000000-0000-0000-0000-00000000000c'),
+      ('91000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004','90000000-0000-0000-0000-000000000004','70000000-0000-0000-0000-00000000000a','2026-08-13',10,'APPROVED','HVAC installation supervision and IR-234 rectification','40000000-0000-0000-0000-000000000010','2026-08-14','40000000-0000-0000-0000-000000000011'),
+      ('91000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004','90000000-0000-0000-0000-000000000005','70000000-0000-0000-0000-00000000000a','2026-08-13',11,'SUBMITTED','Duct support and fire damper access rectification',NULL,NULL,'40000000-0000-0000-0000-000000000012')
+    ON CONFLICT DO NOTHING;
+
+    INSERT INTO public.actual_cost_entries(id,tenant_id,project_id,organization_id,budget_line_id,resource_id,work_item_id,source_type,source_id,cost_date,quantity,unit_rate,amount,currency,description) VALUES
+      ('92000000-0000-0000-0000-000000000001',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000006','81000000-0000-0000-0000-000000000001','90000000-0000-0000-0000-000000000001','70000000-0000-0000-0000-000000000005','TIMESHEET','91000000-0000-0000-0000-000000000001','2026-08-10',8,420,3360,'AED','Approved architectural engineering time'),
+      ('92000000-0000-0000-0000-000000000002',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','81000000-0000-0000-0000-000000000001','90000000-0000-0000-0000-000000000002','70000000-0000-0000-0000-000000000006','TIMESHEET','91000000-0000-0000-0000-000000000002','2026-08-11',9,360,3240,'AED','Approved MEP engineering time'),
+      ('92000000-0000-0000-0000-000000000003',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000003','81000000-0000-0000-0000-000000000002','90000000-0000-0000-0000-000000000003','70000000-0000-0000-0000-000000000009','TIMESHEET','91000000-0000-0000-0000-000000000003','2026-08-12',10,190,1900,'AED','Approved site engineering time'),
+      ('92000000-0000-0000-0000-000000000004',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004','81000000-0000-0000-0000-000000000003','90000000-0000-0000-0000-000000000004','70000000-0000-0000-0000-00000000000a','TIMESHEET','91000000-0000-0000-0000-000000000004','2026-08-13',10,150,1500,'AED','Approved HVAC supervision time'),
+      ('92000000-0000-0000-0000-000000000005',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000003','81000000-0000-0000-0000-000000000002',NULL,'70000000-0000-0000-0000-000000000009','MANUAL',NULL,'2026-08-12',1,0,8420000,'AED','Concrete, reinforcement and formwork certified production to date'),
+      ('92000000-0000-0000-0000-000000000006',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004','81000000-0000-0000-0000-000000000003',NULL,'70000000-0000-0000-0000-00000000000a','MANUAL',NULL,'2026-08-13',1,0,1275000,'AED','HVAC material and installation actual to date'),
+      ('92000000-0000-0000-0000-000000000007',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000005','81000000-0000-0000-0000-000000000004',NULL,'70000000-0000-0000-0000-00000000000b','MANUAL',NULL,'2026-08-14',1,0,960000,'AED','Facade mock-up fabrication and testing'),
+      ('92000000-0000-0000-0000-000000000008',t,'20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','81000000-0000-0000-0000-000000000001',NULL,'70000000-0000-0000-0000-000000000008','MANUAL',NULL,'2026-08-15',1,0,410000,'AED','Authority submission and specialist fire engineering support')
+    ON CONFLICT DO NOTHING;
+
+    -- Documents attached to actual work items: revisions/statuses tell the project story.
+    INSERT INTO public.documents(id,tenant_id,title,doc_type,description,current_version,status,project_id,originator_org_id,document_code,due_at,review_outcome,approved_value,security_classification,discipline,package_code,location_code,issue_purpose,current_revision_code,intake_channel,work_item_id,created_by) VALUES
+      ('a0000000-0000-0000-0000-000000000001',t,'Client Project Requirements & Design Brief','CLIENT_REQUIREMENT','Consolidated client brief and development requirements.',2,'APPROVED','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000001','AUR-CRK-REQ-0001',NULL,'CODE_A',650000,'PROJECT','Project Management','BRIEF','PROJECT','FOR_INFORMATION','02','PORTAL','70000000-0000-0000-0000-000000000001','40000000-0000-0000-0000-000000000004'),
+      ('a0000000-0000-0000-0000-000000000002',t,'Concept Design Report','DESIGN_REPORT','Architectural concept package approved after client comments.',3,'APPROVED','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000006','PRISM-CRK-CD-0001',NULL,'CODE_A',2100000,'PROJECT','Architecture','ARCH-CON','ALL','FOR_APPROVAL','03','PORTAL','70000000-0000-0000-0000-000000000003','40000000-0000-0000-0000-000000000014'),
+      ('a0000000-0000-0000-0000-000000000003',t,'Architectural IFC Drawing Package - Tower A','SHOP_DRAWING','Coordinated architectural IFC issue.',5,'IN_REVIEW','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','MEC-CRK-ARC-0214',now()+interval '3 days',NULL,4200000,'PROJECT','Architecture','ARCH-DD','TOWER-A','FOR_APPROVAL','05','PORTAL','70000000-0000-0000-0000-000000000005','40000000-0000-0000-0000-000000000006'),
+      ('a0000000-0000-0000-0000-000000000004',t,'MEP Coordinated Services Drawing - Level 05','SHOP_DRAWING','Combined services coordination drawing.',4,'IN_REVIEW','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','MEC-CRK-MEP-0188',now()+interval '2 days','CODE_B',1800000,'PROJECT','MEP','MEP-DD','L05','FOR_APPROVAL','04','PORTAL','70000000-0000-0000-0000-000000000006','40000000-0000-0000-0000-000000000009'),
+      ('a0000000-0000-0000-0000-000000000005',t,'Civil Defence Smoke Control Calculation','CALCULATION','Revised smoke-control calculation required for authority resubmission.',2,'IN_REVIEW','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000002','MEC-CRK-FLS-0042',now()-interval '2 days','CODE_C',520000,'PROJECT','Fire & Life Safety','NOC','PROJECT','FOR_APPROVAL','02','PORTAL','70000000-0000-0000-0000-000000000008','40000000-0000-0000-0000-000000000009'),
+      ('a0000000-0000-0000-0000-000000000006',t,'Concrete Pour Inspection Request - L08','INSPECTION_REQUEST','Consultant inspection request for Level 08 slab.',1,'APPROVED','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000003','GBC-CRK-IR-0412',NULL,'CODE_A',1450000,'PROJECT','Structural','STRUCT','TOWER-A-L08','FOR_CONSTRUCTION','01','PORTAL','70000000-0000-0000-0000-000000000009','40000000-0000-0000-0000-00000000000d'),
+      ('a0000000-0000-0000-0000-000000000007',t,'HVAC Inspection Request IR-234','INSPECTION_REQUEST','Returned with comments for fire damper access clearance.',2,'REJECTED','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000004','APEX-CRK-IR-0234',now()-interval '1 day','CODE_C',680000,'PROJECT','MEP','MEP-INST','TOWER-A-L05','FOR_APPROVAL','02','PORTAL','70000000-0000-0000-0000-00000000000a','40000000-0000-0000-0000-000000000011'),
+      ('a0000000-0000-0000-0000-000000000008',t,'Facade Performance Mock-up Test Report','TEST_REPORT','Performance mock-up laboratory and site test record.',2,'IN_REVIEW','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000005','SKY-CRK-FAC-0091',now()+interval '5 days',NULL,2400000,'PROJECT','Facade','FACADE','TOWER-A','FOR_APPROVAL','02','PORTAL','70000000-0000-0000-0000-00000000000b','40000000-0000-0000-0000-000000000013'),
+      ('a0000000-0000-0000-0000-000000000009',t,'Podium Lobby Stone Material Submittal','MATERIAL_SUBMITTAL','Natural stone samples and technical data.',1,'IN_REVIEW','20000000-0000-0000-0000-000000000001','10000000-0000-0000-0000-000000000007','VERTEX-CRK-MAT-0018',now()+interval '7 days',NULL,850000,'PROJECT','Interiors','INTERIOR','PODIUM','FOR_APPROVAL','01','PORTAL','70000000-0000-0000-0000-00000000000c','40000000-0000-0000-0000-000000000015')
+    ON CONFLICT DO NOTHING;
+
+    -- A couple of live approval records make the worklist/SLA indicators meaningful.
+    INSERT INTO public.document_approvals(id,document_id,tenant_id,current_step,status,started_at,initiated_by) VALUES
+      ('b0000000-0000-0000-0000-000000000001','a0000000-0000-0000-0000-000000000003',t,0,'PENDING',now()-interval '1 day','40000000-0000-0000-0000-000000000006'),
+      ('b0000000-0000-0000-0000-000000000002','a0000000-0000-0000-0000-000000000008',t,0,'PENDING',now()-interval '8 hours','40000000-0000-0000-0000-000000000013')
+    ON CONFLICT DO NOTHING;
+    INSERT INTO public.document_approval_steps(id,approval_id,step_index,step_name,authority_type,assignment_type,assignment_party_role,required,sla_hours,due_at) VALUES
+      ('b1000000-0000-0000-0000-000000000001','b0000000-0000-0000-0000-000000000001',0,'Consultant technical review','TECHNICAL_REVIEW','PARTY_ROLE','CONSULTANT',true,48,now()+interval '1 day'),
+      ('b1000000-0000-0000-0000-000000000002','b0000000-0000-0000-0000-000000000002',0,'Consultant facade review','TECHNICAL_REVIEW','PARTY_ROLE','CONSULTANT',true,48,now()+interval '40 hours')
+    ON CONFLICT DO NOTHING;
+
+END $$;
