@@ -90,7 +90,6 @@ public class DocumentIntelligenceService {
     @Value("${document.intelligence.max-inline-bytes:20971520}")
     private long maxInlineBytes;
 
-    @Transactional
     public AnalysisView analyze(UUID tenantId, UUID userId, UUID documentId, boolean force) throws IOException {
         DocumentEntity document = documentRepository.findByIdAndTenantId(documentId, tenantId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found"));
