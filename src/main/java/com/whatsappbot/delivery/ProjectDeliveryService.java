@@ -50,14 +50,14 @@ public class ProjectDeliveryService {
     public ProjectDetailView project(UUID tenantId, UUID userId, UUID projectId) {
         ProjectEntity project = projectService.get(tenantId, userId, projectId);
         TenantUserEntity actor = accessService.requireActiveUser(tenantId, userId);
-        CommercialScope scope = commercialScope(tenantId, projectId, actor);
+        DeliveryScope scope = deliveryScope(tenantId, projectId, actor);
         ProjectDeliveryRepository.ProjectMetrics metrics = repository.metrics(tenantId, projectId);
-        BigDecimal visibleActual = switch (scope.mode()) {
+        BigDecimal visibleActual = switch (scope.commercialMode()) {
             case "PROJECT" -> metrics.actualCost();
             case "ORGANIZATION" -> repository.actualCost(tenantId, projectId, scope.organizationId());
             default -> BigDecimal.ZERO;
         };
-        BigDecimal visibleContract = switch (scope.mode()) {
+        BigDecimal visibleContract = switch (scope.commercialMode()) {
             case "PROJECT" -> nz(project.getContractValue());
             case "ORGANIZATION" -> repository.organizationContractValue(tenantId, projectId, scope.organizationId());
             default -> BigDecimal.ZERO;
@@ -85,39 +85,42 @@ public class ProjectDeliveryService {
                             open, blocked, packages);
                 }).toList();
 
+        BigDecimal visibleHours = stages.stream().flatMap(s -> s.workPackages().stream())
+                .map(WorkPackageView::totalHours).reduce(BigDecimal.ZERO, BigDecimal::add);
         DeliveryKpis kpis = new DeliveryKpis(metrics.progressPercent(), visibleActual,
                 metrics.openWorkItems(), metrics.blockedWorkItems(), metrics.overdueDocuments(),
-                metrics.pendingApprovals(), metrics.totalHours(), metrics.stageCount(), metrics.completedStages());
+                metrics.pendingApprovals(), visibleHours, metrics.stageCount(), metrics.completedStages());
 
         return new ProjectDetailView(project.getId(), project.getProjectCode(), project.getName(),
                 project.getDescription(), project.getStatus(), project.getCurrency(), visibleContract,
-                scope.mode(), project.getStartDate(), project.getEndDate(), kpis, participants, stages);
+                scope.commercialMode(), project.getStartDate(), project.getEndDate(), kpis, participants, stages);
     }
 
     private ProjectCardView toProjectCard(UUID tenantId, TenantUserEntity actor, ProjectEntity project) {
         ProjectDeliveryRepository.ProjectMetrics m = repository.metrics(tenantId, project.getId());
-        CommercialScope scope = commercialScope(tenantId, project.getId(), actor);
-        BigDecimal visibleContract = switch (scope.mode()) {
+        DeliveryScope scope = deliveryScope(tenantId, project.getId(), actor);
+        BigDecimal visibleContract = switch (scope.commercialMode()) {
             case "PROJECT" -> nz(project.getContractValue());
             case "ORGANIZATION" -> repository.organizationContractValue(tenantId, project.getId(), scope.organizationId());
             default -> BigDecimal.ZERO;
         };
-        BigDecimal visibleActual = switch (scope.mode()) {
+        BigDecimal visibleActual = switch (scope.commercialMode()) {
             case "PROJECT" -> m.actualCost();
             case "ORGANIZATION" -> repository.actualCost(tenantId, project.getId(), scope.organizationId());
             default -> BigDecimal.ZERO;
         };
         return new ProjectCardView(project.getId(), project.getProjectCode(), project.getName(), project.getStatus(),
-                project.getCurrency(), visibleContract, scope.mode(), project.getStartDate(), project.getEndDate(),
+                project.getCurrency(), visibleContract, scope.commercialMode(), project.getStartDate(), project.getEndDate(),
                 m.progressPercent(), visibleActual, m.openWorkItems(), m.blockedWorkItems(), m.overdueDocuments(),
                 m.pendingApprovals(), m.participantCount(), m.stageCount(), m.completedStages());
     }
 
     private WorkPackageView toPackage(UUID tenantId, UUID userId, UUID projectId,
-                                      ProjectDeliveryRepository.PackageRow pkg, CommercialScope scope) {
+                                      ProjectDeliveryRepository.PackageRow pkg, DeliveryScope scope) {
         List<WorkItemView> items = repository.workItems(tenantId, projectId, pkg.id()).stream()
                 .map(item -> {
                     boolean commercial = canSeeItemCommercial(scope, item.responsibleOrganizationId());
+                    boolean hoursVisible = canSeeItemHours(scope, item.responsibleOrganizationId());
                     List<WorkDocumentView> documents = repository.documents(tenantId, item.id()).stream()
                             .filter(d -> canViewDocument(tenantId, userId, d.id()))
                             .map(d -> new WorkDocumentView(d.id(), d.documentCode(), d.title(), d.docType(),
@@ -129,12 +132,13 @@ public class ProjectDeliveryService {
                             item.responsibleOrganizationName(), commercial ? item.budgetLineId() : null,
                             commercial ? item.budgetAmount() : BigDecimal.ZERO,
                             commercial ? item.actualCost() : BigDecimal.ZERO,
-                            item.totalHours(), item.documentCount(), item.pendingDocumentCount(), item.blockedReason(),
+                            hoursVisible ? item.totalHours() : BigDecimal.ZERO,
+                            item.documentCount(), item.pendingDocumentCount(), item.blockedReason(),
                             item.plannedStart(), item.plannedEnd(), item.actualStart(), item.actualEnd(),
                             repository.assignments(tenantId, item.id()).stream()
                                     .map(a -> new AssignmentView(a.userId(), a.fullName(), a.jobTitle(), a.department(),
                                             a.accessRole(), a.organizationName(), a.responsibility())).toList(),
-                            documents, commercial);
+                            documents, commercial, hoursVisible);
                 }).toList();
         BigDecimal budget = items.stream().map(WorkItemView::budgetAmount).reduce(BigDecimal.ZERO, BigDecimal::add);
         BigDecimal actual = items.stream().map(WorkItemView::actualCost).reduce(BigDecimal.ZERO, BigDecimal::add);
@@ -148,22 +152,27 @@ public class ProjectDeliveryService {
                 progress, budget, actual, hours, open, blocked, items);
     }
 
-    private CommercialScope commercialScope(UUID tenantId, UUID projectId, TenantUserEntity actor) {
-        if (accessService.isTenantAdministrator(actor)) return new CommercialScope("PROJECT", null);
-        if (actor.getRole() != UserRole.MANAGER && actor.getRole() != UserRole.ADMIN)
-            return new CommercialScope("NONE", actor.getOrganizationId());
+    private DeliveryScope deliveryScope(UUID tenantId, UUID projectId, TenantUserEntity actor) {
+        if (accessService.isTenantAdministrator(actor)) return new DeliveryScope("PROJECT", null, true);
         List<PartyRole> roles = accessService.rolesOnProject(tenantId, projectId, actor);
-        if (roles.contains(PartyRole.CLIENT) || roles.contains(PartyRole.CONSULTANT))
-            return new CommercialScope("PROJECT", actor.getOrganizationId());
+        boolean broadOperational = roles.contains(PartyRole.CLIENT) || roles.contains(PartyRole.CONSULTANT);
+        if (actor.getRole() != UserRole.MANAGER && actor.getRole() != UserRole.ADMIN)
+            return new DeliveryScope("NONE", actor.getOrganizationId(), broadOperational);
+        if (broadOperational) return new DeliveryScope("PROJECT", actor.getOrganizationId(), true);
         return actor.getOrganizationId() == null
-                ? new CommercialScope("NONE", null)
-                : new CommercialScope("ORGANIZATION", actor.getOrganizationId());
+                ? new DeliveryScope("NONE", null, false)
+                : new DeliveryScope("ORGANIZATION", actor.getOrganizationId(), false);
     }
 
-    private static boolean canSeeItemCommercial(CommercialScope scope, UUID responsibleOrganizationId) {
-        if ("PROJECT".equals(scope.mode())) return true;
-        return "ORGANIZATION".equals(scope.mode()) && scope.organizationId() != null
+    private static boolean canSeeItemCommercial(DeliveryScope scope, UUID responsibleOrganizationId) {
+        if ("PROJECT".equals(scope.commercialMode())) return true;
+        return "ORGANIZATION".equals(scope.commercialMode()) && scope.organizationId() != null
                 && scope.organizationId().equals(responsibleOrganizationId);
+    }
+
+    private static boolean canSeeItemHours(DeliveryScope scope, UUID responsibleOrganizationId) {
+        if (scope.broadOperationalHours()) return true;
+        return scope.organizationId() != null && scope.organizationId().equals(responsibleOrganizationId);
     }
 
     private boolean canViewDocument(UUID tenantId, UUID userId, UUID documentId) {
@@ -182,7 +191,7 @@ public class ProjectDeliveryService {
 
     private static BigDecimal nz(BigDecimal value) { return value == null ? BigDecimal.ZERO : value; }
 
-    private record CommercialScope(String mode, UUID organizationId) {}
+    private record DeliveryScope(String commercialMode, UUID organizationId, boolean broadOperationalHours) {}
 
     public record PortfolioView(String accountName, int activeProjects, BigDecimal totalContractValue,
                                 BigDecimal totalActualCost, int openWorkItems, int blockedWorkItems,
@@ -218,7 +227,7 @@ public class ProjectDeliveryService {
                                int pendingDocumentCount, String blockedReason, LocalDate plannedStart,
                                LocalDate plannedEnd, LocalDate actualStart, LocalDate actualEnd,
                                List<AssignmentView> assignments, List<WorkDocumentView> documents,
-                               boolean commercialVisible) {}
+                               boolean commercialVisible, boolean hoursVisible) {}
     public record AssignmentView(UUID userId, String fullName, String jobTitle, String department,
                                  String accessRole, String organizationName, String responsibility) {}
     public record WorkDocumentView(UUID id, String documentCode, String title, String docType, String status,
