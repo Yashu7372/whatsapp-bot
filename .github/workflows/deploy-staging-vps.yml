@@ -1,0 +1,174 @@
+name: Deploy Staging VPS
+
+on:
+  push:
+    branches: [feature/enterprise-document-control]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: enterprise-control-staging
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Verify backend
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: whatsapp_bot
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d whatsapp_bot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/whatsapp_bot
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      WHATSAPP_VERIFY_TOKEN: ci-verify-token
+      WHATSAPP_ACCESS_TOKEN: ci-access-token
+      WHATSAPP_MOCK_SEND_ENABLED: "true"
+      AI_PROVIDER: GEMINI
+      AI_GEMINI_API_KEY: ""
+      KNOWLEDGE_REBUILD_ON_STARTUP: "false"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Verify Flyway, Hibernate and tests
+        run: mvn -B -ntp clean verify
+
+  deploy:
+    name: Build image and deploy
+    needs: verify
+    if: github.event_name == 'workflow_dispatch' || vars.VPS_DEPLOY_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: staging
+    env:
+      VPS_HOST: ${{ secrets.VPS_HOST }}
+      VPS_USER: ${{ secrets.VPS_USER }}
+      VPS_PORT: ${{ secrets.VPS_PORT || '22' }}
+      VPS_SSH_PRIVATE_KEY: ${{ secrets.VPS_SSH_PRIVATE_KEY }}
+      VPS_ENV_FILE: ${{ secrets.VPS_ENV_FILE }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Validate deployment secrets
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in VPS_HOST VPS_USER VPS_SSH_PRIVATE_KEY VPS_ENV_FILE; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required staging secret: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Resolve image name
+        shell: bash
+        run: |
+          IMAGE_REPO="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          echo "IMAGE_REPO=$IMAGE_REPO" >> "$GITHUB_ENV"
+          echo "IMAGE_STAGING=$IMAGE_REPO:staging" >> "$GITHUB_ENV"
+          echo "IMAGE_SHA=$IMAGE_REPO:${{ github.sha }}" >> "$GITHUB_ENV"
+
+      - name: Login to GitHub Container Registry
+        shell: bash
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push backend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            -t "$IMAGE_SHA" \
+            -t "$IMAGE_STAGING" \
+            .
+          docker push "$IMAGE_SHA"
+          docker push "$IMAGE_STAGING"
+
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$VPS_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+          ssh-keyscan -p "$VPS_PORT" -H "$VPS_HOST" >> "$HOME/.ssh/known_hosts"
+          chmod 600 "$HOME/.ssh/known_hosts"
+
+      - name: Upload runtime definition
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$VPS_ENV_FILE" > /tmp/enterprise-control.env
+          ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" 'mkdir -p "$HOME/enterprise-control"'
+          scp -P "$VPS_PORT" deploy/vps/docker-compose.yml "$VPS_USER@$VPS_HOST:enterprise-control/docker-compose.yml"
+          scp -P "$VPS_PORT" /tmp/enterprise-control.env "$VPS_USER@$VPS_HOST:enterprise-control/.env"
+
+      - name: Deploy containers
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" | \
+            ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" \
+              "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+
+          ssh -p "$VPS_PORT" "$VPS_USER@$VPS_HOST" "bash -s" <<EOF
+          set -euo pipefail
+          cd "\$HOME/enterprise-control"
+
+          export APP_IMAGE="$IMAGE_SHA"
+          docker compose pull postgres cloudflared app
+          docker compose up -d --remove-orphans
+
+          healthy=0
+          for attempt in \$(seq 1 45); do
+            if curl -fsS http://127.0.0.1:8080/actuator/health >/tmp/enterprise-health.json 2>/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "\$healthy" -ne 1 ]; then
+            echo "Backend did not become healthy."
+            docker compose ps
+            docker compose logs --tail=200 app postgres cloudflared
+            exit 1
+          fi
+
+          cat /tmp/enterprise-health.json
+          docker compose ps
+          docker image prune -f --filter 'until=168h' >/dev/null 2>&1 || true
+          EOF
+
+      - name: Deployment summary
+        shell: bash
+        run: |
+          echo "### Staging deployed" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Image: \`$IMAGE_SHA\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Host: \`$VPS_HOST\`" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Public API hostname is controlled by the Cloudflare Tunnel route." >> "$GITHUB_STEP_SUMMARY"
