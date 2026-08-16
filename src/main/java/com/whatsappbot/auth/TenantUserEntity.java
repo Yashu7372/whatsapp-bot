@@ -33,12 +33,23 @@ public class TenantUserEntity {
     @Column(name = "full_name", length = 200)
     private String fullName;
 
+    /**
+     * Application access role. This deliberately stays small and stable; real project professions
+     * such as Architect, Engineer, Accountant or Document Controller belong in jobTitle/department
+     * and project assignments rather than becoming authorization enums.
+     */
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false, length = 50)
     private UserRole role = UserRole.ADMIN;
 
     @Column(name = "organization_id")
     private UUID organizationId;
+
+    @Column(name = "job_title", length = 160)
+    private String jobTitle;
+
+    @Column(name = "department", length = 120)
+    private String department;
 
     @Column(name = "active", nullable = false)
     private boolean active = true;
