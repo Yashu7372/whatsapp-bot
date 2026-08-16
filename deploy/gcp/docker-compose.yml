@@ -1,0 +1,50 @@
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-whatsapp_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-whatsapp_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-whatsapp_bot} -d ${POSTGRES_DB:-whatsapp_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    networks:
+      - app_net
+
+  app:
+    image: ${APP_IMAGE:-ghcr.io/yashu7372/whatsapp-bot:staging}
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPRING_PROFILES_ACTIVE: demo
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-whatsapp_bot}
+      DB_USERNAME: ${POSTGRES_USER:-whatsapp_bot}
+      DB_PASSWORD: ${POSTGRES_PASSWORD}
+      SERVER_PORT: 8080
+      STORAGE_LOCAL_DIR: /data/uploads
+      STORAGE_LOCAL_BASE_URL: ${PUBLIC_API_BASE_URL:-http://127.0.0.1:8080}
+      UPLOAD_LINK_PUBLIC_BASE_URL: ${PUBLIC_APP_BASE_URL}
+    volumes:
+      - app_uploads:/data/uploads
+    ports:
+      - "127.0.0.1:8080:8080"
+    networks:
+      - app_net
+
+networks:
+  app_net:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  app_uploads:
