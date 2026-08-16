@@ -35,6 +35,18 @@ class ProjectDeliveryRepository {
         return new ProjectMetrics(progress, actual, open, blocked, overdue, pending, participants, stages, completedStages, hours);
     }
 
+    BigDecimal actualCost(UUID tenantId, UUID projectId, UUID organizationId) {
+        return decimal("select coalesce(sum(amount),0) from actual_cost_entries where tenant_id=? and project_id=? and organization_id=?",
+                tenantId, projectId, organizationId);
+    }
+
+    BigDecimal organizationContractValue(UUID tenantId, UUID projectId, UUID organizationId) {
+        return decimal("select coalesce(sum(c.original_value+c.approved_variations),0) from project_contracts c " +
+                        "join project_participants p on p.id=c.participant_id " +
+                        "where c.tenant_id=? and c.project_id=? and p.organization_id=? and c.status<>'CANCELLED'",
+                tenantId, projectId, organizationId);
+    }
+
     List<ParticipantRow> participants(UUID tenantId, UUID projectId) {
         String sql = "select p.id,p.organization_id,o.name,o.org_code,p.party_role,p.parent_participant_id," +
                 " (select count(*) from tenant_users u where u.tenant_id=p.tenant_id and u.organization_id=p.organization_id and u.active=true) staff_count" +
