@@ -1,0 +1,61 @@
+# Lightweight always-on VM profile for staging / demos.
+# Sensitive values remain environment-driven and are supplied by deploy/vps/.env.
+
+spring:
+  servlet:
+    multipart:
+      enabled: true
+      max-file-size: ${UPLOAD_MAX_FILE_SIZE:50MB}
+      max-request-size: ${UPLOAD_MAX_REQUEST_SIZE:50MB}
+
+  datasource:
+    hikari:
+      minimum-idle: ${DB_POOL_MIN_IDLE:1}
+      maximum-pool-size: ${DB_POOL_MAX_SIZE:6}
+      connection-timeout: 30000
+      idle-timeout: 600000
+      max-lifetime: 1800000
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+    properties:
+      hibernate:
+        format_sql: false
+
+  flyway:
+    enabled: true
+    baseline-on-migrate: false
+
+server:
+  port: ${SERVER_PORT:8080}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: never
+
+logging:
+  level:
+    com.whatsappbot: INFO
+    org.flywaydb: INFO
+    org.hibernate.SQL: WARN
+    com.zaxxer.hikari: WARN
+
+app:
+  jwt:
+    secret: ${JWT_SECRET}
+    access-expiry-seconds: ${JWT_ACCESS_EXPIRY_SECONDS:3600}
+    refresh-expiry-seconds: ${JWT_REFRESH_EXPIRY_SECONDS:604800}
+  storage:
+    provider: ${APP_STORAGE_PROVIDER:local}
+    local-dir: ${STORAGE_LOCAL_DIR:/data/uploads}
+    local-base-url: ${STORAGE_LOCAL_BASE_URL}
+    upload-token-ttl-seconds: ${STORAGE_UPLOAD_TOKEN_TTL_SECONDS:900}
+  upload-links:
+    public-base-url: ${UPLOAD_LINK_PUBLIC_BASE_URL}
