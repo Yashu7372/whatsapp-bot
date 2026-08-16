@@ -18,15 +18,18 @@ import static org.assertj.core.api.Assertions.assertThat;
 /**
  * Guards the migration set itself.
  *
- * <p>Two scripts once shipped claiming version 32. Flyway rejects that during resolution — before
- * it opens a connection — so the whole application failed to start on every environment, while the
- * build stayed green because nothing in the test suite touched Flyway. This test needs no database
- * and takes milliseconds, so that class of mistake can never reach a branch again.
+ * <p>The repository deliberately squashed the old V3..V38 development history into the current
+ * V1 baseline while retaining V2 and the post-squash production tail beginning at V39. Flyway is
+ * valid with that historical jump; what must remain protected is duplicate versions and gaps in
+ * the live tail. Treating the deliberate V2 -> V39 jump as an error made CI red even though a
+ * clean PostgreSQL instance migrated successfully.
  */
 class FlywayMigrationResolutionTest {
 
     private static final Path MIGRATIONS = Path.of("src/main/resources/db/migration");
     private static final Pattern VERSIONED = Pattern.compile("^V(\\d+)__([a-z0-9_]+)\\.sql$");
+    private static final int SQUASHED_BASELINE_LAST_VERSION = 2;
+    private static final int LIVE_TAIL_FIRST_VERSION = 39;
 
     @Test
     @DisplayName("no two migrations claim the same version")
@@ -51,7 +54,7 @@ class FlywayMigrationResolutionTest {
     }
 
     @Test
-    @DisplayName("versions form a gapless sequence starting at 1")
+    @DisplayName("migration history keeps the known squashed baseline and a gapless live tail")
     void versionsAreContiguous() throws IOException {
         List<Integer> versions = migrationFileNames().stream()
                 .map(VERSIONED::matcher)
@@ -62,12 +65,28 @@ class FlywayMigrationResolutionTest {
 
         assertThat(versions).isNotEmpty();
         assertThat(versions.get(0)).isEqualTo(1);
-        for (int i = 1; i < versions.size(); i++) {
-            assertThat(versions.get(i))
-                    .withFailMessage("Gap in migration versions between V%d and V%d — a skipped number usually "
-                            + "means a script was renamed or lost", versions.get(i - 1), versions.get(i))
-                    .isEqualTo(versions.get(i - 1) + 1);
+        assertThat(versions).contains(SQUASHED_BASELINE_LAST_VERSION, LIVE_TAIL_FIRST_VERSION);
+
+        List<Integer> liveTail = versions.stream()
+                .filter(v -> v >= LIVE_TAIL_FIRST_VERSION)
+                .toList();
+        assertThat(liveTail).isNotEmpty();
+        assertThat(liveTail.get(0)).isEqualTo(LIVE_TAIL_FIRST_VERSION);
+
+        for (int i = 1; i < liveTail.size(); i++) {
+            assertThat(liveTail.get(i))
+                    .withFailMessage("Gap in live migration versions between V%d and V%d — a skipped number usually "
+                            + "means a script was renamed or lost", liveTail.get(i - 1), liveTail.get(i))
+                    .isEqualTo(liveTail.get(i - 1) + 1);
         }
+
+        List<Integer> unexpectedHistoricalVersions = versions.stream()
+                .filter(v -> v > SQUASHED_BASELINE_LAST_VERSION && v < LIVE_TAIL_FIRST_VERSION)
+                .toList();
+        assertThat(unexpectedHistoricalVersions)
+                .withFailMessage("V3..V38 were intentionally squashed into V1; do not reintroduce partial historical migrations: %s",
+                        unexpectedHistoricalVersions)
+                .isEmpty();
     }
 
     private static List<String> migrationFileNames() throws IOException {
