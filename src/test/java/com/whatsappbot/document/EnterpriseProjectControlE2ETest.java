@@ -43,7 +43,7 @@ class EnterpriseProjectControlE2ETest {
 
     private static final UUID PROJECT = UUID.fromString("20000000-0000-0000-0000-000000000001");
     private static final UUID CONTRACTOR_DC = UUID.fromString("40000000-0000-0000-0000-000000000016");
-    private static final UUID CONSULTANT_RE = UUID.fromString("40000000-0000-0000-0000-000000000007");
+    private static final UUID CONSULTANT_MANAGER = UUID.fromString("40000000-0000-0000-0000-000000000006");
     private static final UUID CLIENT_DIRECTOR = UUID.fromString("40000000-0000-0000-0000-000000000002");
 
     @Autowired DocumentService documentService;
@@ -108,8 +108,9 @@ class EnterpriseProjectControlE2ETest {
                 "APPROVED", "Register, numbering and submission package checked.");
         assertCurrentStep(approval.getId(), 1);
 
-        // Consultant technical review.
-        documentService.decideStep(tenant, CONSULTANT_RE, approval.getId(),
+        // Party-role stages are intentionally decided by MANAGER/ADMIN users. A project-level
+        // REVIEWER can act when a workflow explicitly assigns that reviewer by email.
+        documentService.decideStep(tenant, CONSULTANT_MANAGER, approval.getId(),
                 "APPROVED", "Technical review complete; proceed for client decision.");
         assertCurrentStep(approval.getId(), 2);
 
