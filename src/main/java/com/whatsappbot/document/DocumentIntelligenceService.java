@@ -11,9 +11,12 @@ import dev.langchain4j.data.message.TextContent;
 import dev.langchain4j.data.message.UserMessage;
 import dev.langchain4j.model.chat.ChatModel;
 import lombok.RequiredArgsConstructor;
-import org.springframework.beans.factory.annotation.Value;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
+import org.springframework.dao.DataIntegrityViolationException;
+import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -25,6 +28,7 @@ import java.util.UUID;
 
 @Service
 @RequiredArgsConstructor
+@EnableConfigurationProperties(DocumentIntelligenceProperties.class)
 public class DocumentIntelligenceService {
 
     private static final String PROMPT = """
@@ -86,15 +90,13 @@ public class DocumentIntelligenceService {
     private final ChatModel chatModel;
     private final AiProperties aiProperties;
     private final ObjectMapper objectMapper;
-
-    @Value("${document.intelligence.max-inline-bytes:20971520}")
-    private long maxInlineBytes;
+    private final DocumentIntelligenceProperties intelligenceProperties;
 
     public AnalysisView analyze(UUID tenantId, UUID userId, UUID documentId, boolean force) throws IOException {
         DocumentEntity document = documentRepository.findByIdAndTenantId(documentId, tenantId)
                 .orElseThrow(() -> new IllegalArgumentException("Document not found"));
 
-        DocumentVersionEntity version = latestVersion(documentId);
+        DocumentVersionEntity version = latestVersion(tenantId, documentId);
         if (!force) {
             var existing = intelligenceRepository.findByTenantIdAndDocumentIdAndVersionNum(
                     tenantId, documentId, version.getVersionNum());
@@ -114,6 +116,7 @@ public class DocumentIntelligenceService {
         if (!contentType.contains("pdf")) {
             throw new IllegalArgumentException("Native document intelligence currently accepts PDF files; contentType=" + asset.getContentType());
         }
+        long maxInlineBytes = intelligenceProperties.getMaxInlineBytes();
         if (asset.getSizeBytes() > maxInlineBytes) {
             throw new IllegalArgumentException("PDF is too large for inline multimodal analysis (" + asset.getSizeBytes()
                     + " bytes > " + maxInlineBytes + "). Configure Files API processing for large documents.");
@@ -122,6 +125,7 @@ public class DocumentIntelligenceService {
         DocumentIntelligenceEntity run = intelligenceRepository
                 .findByTenantIdAndDocumentIdAndVersionNum(tenantId, documentId, version.getVersionNum())
                 .orElseGet(DocumentIntelligenceEntity::new);
+        boolean claimingNewRun = run.getId() == null;
         run.setTenantId(tenantId);
         run.setDocumentId(documentId);
         run.setVersionNum(version.getVersionNum());
@@ -131,7 +135,16 @@ public class DocumentIntelligenceService {
         run.setAnalyzedBy(userId);
         run.setErrorMessage(null);
         run.setCompletedAt(null);
-        run = intelligenceRepository.save(run);
+        try {
+            run = intelligenceRepository.save(run);
+        } catch (DataIntegrityViolationException lostClaimRace) {
+            // Two concurrent analyze() calls for the same (tenant, document, version) both saw no
+            // existing row and both tried to insert; the loser lands here instead of letting the
+            // unique-constraint violation escape uncaught. Report the winner's actual state rather
+            // than a generic "conflicts with an existing record" 409.
+            if (!claimingNewRun) throw lostClaimRace;
+            return resolveConcurrentClaim(tenantId, documentId, version.getVersionNum());
+        }
 
         try {
             byte[] pdfBytes = readBounded(asset.getStoredPath(), maxInlineBytes);
@@ -159,6 +172,22 @@ public class DocumentIntelligenceService {
         }
     }
 
+    private AnalysisView resolveConcurrentClaim(UUID tenantId, UUID documentId, int versionNum) {
+        DocumentIntelligenceEntity winner = intelligenceRepository
+                .findByTenantIdAndDocumentIdAndVersionNum(tenantId, documentId, versionNum)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.CONFLICT,
+                        "Analysis for this document version is already being processed by another request."));
+        if ("COMPLETED".equals(winner.getStatus())) {
+            return toView(winner);
+        }
+        if ("FAILED".equals(winner.getStatus())) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "A concurrent analysis of this document version failed. Retry with force=true.");
+        }
+        throw new ResponseStatusException(HttpStatus.CONFLICT,
+                "Analysis for this document version is already in progress. Check back shortly.");
+    }
+
     @Transactional(readOnly = true)
     public AnalysisView latest(UUID tenantId, UUID documentId) {
         return intelligenceRepository.findTopByTenantIdAndDocumentIdOrderByVersionNumDesc(tenantId, documentId)
@@ -166,8 +195,9 @@ public class DocumentIntelligenceService {
                 .orElseThrow(() -> new IllegalArgumentException("No document intelligence result found"));
     }
 
-    private DocumentVersionEntity latestVersion(UUID documentId) {
-        List<DocumentVersionEntity> versions = versionRepository.findAllByDocumentIdOrderByVersionNumDesc(documentId);
+    private DocumentVersionEntity latestVersion(UUID tenantId, UUID documentId) {
+        List<DocumentVersionEntity> versions = versionRepository
+                .findAllByDocumentIdAndTenant_IdOrderByVersionNumDesc(documentId, tenantId);
         if (versions.isEmpty()) throw new IllegalStateException("Document has no version to analyze");
         return versions.getFirst();
     }

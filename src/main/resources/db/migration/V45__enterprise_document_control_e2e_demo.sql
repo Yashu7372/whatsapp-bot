@@ -27,6 +27,9 @@ BEGIN
     VALUES(
         '40000000-0000-0000-0000-000000000016',t,
         'document.controller@gulfbuild.demo',
+        -- Intentionally the same demo password hash as every other seed account in
+        -- V42's `pwd` variable (one shared demo password) — not a real credential
+        -- pattern, and this fixture never runs outside DEMO-tenant environments.
         '$2a$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/LewY.5AEfAxwd6O3.',
         'Noor Siddiqui','REVIEWER','10000000-0000-0000-0000-000000000003',
         'Document Controller','Project Controls',true,false,false,NULL)
