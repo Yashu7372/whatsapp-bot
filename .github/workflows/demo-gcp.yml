@@ -1,0 +1,377 @@
+name: Demo Environment - GCP
+
+on:
+  push:
+    branches: [feature/enterprise-document-control]
+  workflow_dispatch:
+    inputs:
+      action:
+        description: Demo environment action
+        required: true
+        default: start
+        type: choice
+        options:
+          - start
+          - stop
+
+permissions:
+  contents: read
+  packages: write
+  id-token: write
+
+concurrency:
+  group: enterprise-control-gcp-demo
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Verify and publish latest backend image
+    if: github.event_name == 'push' || inputs.action == 'start'
+    runs-on: ubuntu-latest
+    outputs:
+      image: ${{ steps.image.outputs.image }}
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_DB: whatsapp_bot
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd="pg_isready -U postgres -d whatsapp_bot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    env:
+      DB_URL: jdbc:postgresql://localhost:5432/whatsapp_bot
+      DB_USERNAME: postgres
+      DB_PASSWORD: postgres
+      WHATSAPP_VERIFY_TOKEN: ci-verify-token
+      WHATSAPP_ACCESS_TOKEN: ci-access-token
+      WHATSAPP_MOCK_SEND_ENABLED: "true"
+      AI_PROVIDER: GEMINI
+      AI_GEMINI_API_KEY: ""
+      KNOWLEDGE_REBUILD_ON_STARTUP: "false"
+
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Verify Flyway, Hibernate and tests
+        run: mvn -B -ntp clean verify
+
+      - name: Resolve image name
+        id: image
+        shell: bash
+        run: |
+          IMAGE_REPO="ghcr.io/$(echo '${{ github.repository }}' | tr '[:upper:]' '[:lower:]')"
+          IMAGE_SHA="$IMAGE_REPO:${{ github.sha }}"
+          echo "IMAGE_REPO=$IMAGE_REPO" >> "$GITHUB_ENV"
+          echo "IMAGE_SHA=$IMAGE_SHA" >> "$GITHUB_ENV"
+          echo "image=$IMAGE_SHA" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and push backend image
+        shell: bash
+        run: |
+          set -euo pipefail
+          docker build \
+            --label "org.opencontainers.image.revision=${{ github.sha }}" \
+            -t "$IMAGE_SHA" \
+            -t "$IMAGE_REPO:staging" \
+            .
+          docker push "$IMAGE_SHA"
+          docker push "$IMAGE_REPO:staging"
+
+  start:
+    name: Start demo and refresh Cloudflare Pages
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'start'
+    needs: build
+    runs-on: ubuntu-latest
+
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      GCP_ZONE: ${{ vars.GCP_DEMO_ZONE }}
+      GCP_VM_NAME: ${{ vars.GCP_DEMO_VM_NAME }}
+      DEMO_VM_SSH_USER: ${{ vars.DEMO_VM_SSH_USER }}
+      DEMO_VM_SSH_PRIVATE_KEY: ${{ secrets.DEMO_VM_SSH_PRIVATE_KEY }}
+      DEMO_ENV_FILE: ${{ secrets.DEMO_ENV_FILE }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_PAGES_PROJECT: ${{ vars.CLOUDFLARE_PAGES_PROJECT }}
+      IMAGE_SHA: ${{ needs.build.outputs.image }}
+
+    steps:
+      - name: Checkout backend
+        uses: actions/checkout@v4
+
+      - name: Validate demo configuration
+        shell: bash
+        run: |
+          set -euo pipefail
+          for name in \
+            GCP_PROJECT_ID GCP_WORKLOAD_IDENTITY_PROVIDER GCP_SERVICE_ACCOUNT \
+            GCP_ZONE GCP_VM_NAME DEMO_VM_SSH_USER DEMO_VM_SSH_PRIVATE_KEY \
+            DEMO_ENV_FILE CLOUDFLARE_API_TOKEN CLOUDFLARE_ACCOUNT_ID \
+            CLOUDFLARE_PAGES_PROJECT IMAGE_SHA; do
+            if [ -z "${!name:-}" ]; then
+              echo "Missing required GitHub secret/variable: $name" >&2
+              exit 1
+            fi
+          done
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Start Compute Engine VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATUS=$(gcloud compute instances describe "$GCP_VM_NAME" \
+            --project="$GCP_PROJECT_ID" --zone="$GCP_ZONE" --format='value(status)')
+
+          if [ "$STATUS" != "RUNNING" ]; then
+            gcloud compute instances start "$GCP_VM_NAME" \
+              --project="$GCP_PROJECT_ID" --zone="$GCP_ZONE" --quiet
+          fi
+
+          for attempt in $(seq 1 60); do
+            STATUS=$(gcloud compute instances describe "$GCP_VM_NAME" \
+              --project="$GCP_PROJECT_ID" --zone="$GCP_ZONE" --format='value(status)')
+            VM_IP=$(gcloud compute instances describe "$GCP_VM_NAME" \
+              --project="$GCP_PROJECT_ID" --zone="$GCP_ZONE" \
+              --format='value(networkInterfaces[0].accessConfigs[0].natIP)')
+            if [ "$STATUS" = "RUNNING" ] && [ -n "$VM_IP" ]; then
+              echo "DEMO_VM_IP=$VM_IP" >> "$GITHUB_ENV"
+              exit 0
+            fi
+            sleep 3
+          done
+
+          echo "VM did not become reachable with an external IP." >&2
+          exit 1
+
+      - name: Prepare SSH
+        shell: bash
+        run: |
+          set -euo pipefail
+          install -d -m 700 "$HOME/.ssh"
+          printf '%s\n' "$DEMO_VM_SSH_PRIVATE_KEY" > "$HOME/.ssh/id_ed25519"
+          chmod 600 "$HOME/.ssh/id_ed25519"
+
+          for attempt in $(seq 1 40); do
+            if ssh-keyscan -T 5 -H "$DEMO_VM_IP" > "$HOME/.ssh/known_hosts" 2>/dev/null; then
+              chmod 600 "$HOME/.ssh/known_hosts"
+              exit 0
+            fi
+            sleep 3
+          done
+
+          echo "SSH did not become reachable on $DEMO_VM_IP." >&2
+          exit 1
+
+      - name: Upload runtime definition
+        shell: bash
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$DEMO_ENV_FILE" > /tmp/enterprise-demo.env
+          printf '\nAPP_IMAGE=%s\n' "$IMAGE_SHA" >> /tmp/enterprise-demo.env
+          printf 'PUBLIC_APP_BASE_URL=https://staging.%s.pages.dev\n' "$CLOUDFLARE_PAGES_PROJECT" >> /tmp/enterprise-demo.env
+          printf 'PUBLIC_API_BASE_URL=http://127.0.0.1:8080\n' >> /tmp/enterprise-demo.env
+
+          ssh "$DEMO_VM_SSH_USER@$DEMO_VM_IP" 'mkdir -p "$HOME/enterprise-control"'
+          scp deploy/gcp/docker-compose.yml "$DEMO_VM_SSH_USER@$DEMO_VM_IP:enterprise-control/docker-compose.yml"
+          scp /tmp/enterprise-demo.env "$DEMO_VM_SSH_USER@$DEMO_VM_IP:enterprise-control/.env"
+
+      - name: Start PostgreSQL and Spring Boot
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          printf '%s' "${{ secrets.GITHUB_TOKEN }}" | \
+            ssh "$DEMO_VM_SSH_USER@$DEMO_VM_IP" \
+              "docker login ghcr.io -u '${{ github.actor }}' --password-stdin"
+
+          ssh "$DEMO_VM_SSH_USER@$DEMO_VM_IP" "bash -s" <<'EOF'
+          set -euo pipefail
+          cd "$HOME/enterprise-control"
+          docker compose pull postgres app
+          docker compose up -d --remove-orphans
+
+          healthy=0
+          for attempt in $(seq 1 60); do
+            if curl -fsS http://127.0.0.1:8080/actuator/health >/tmp/enterprise-health.json 2>/dev/null; then
+              healthy=1
+              break
+            fi
+            sleep 2
+          done
+
+          if [ "$healthy" -ne 1 ]; then
+            echo "Backend did not become healthy."
+            docker compose ps
+            docker compose logs --tail=200 app postgres
+            exit 1
+          fi
+          EOF
+
+      - name: Capture Quick Tunnel URL
+        id: tunnel
+        shell: bash
+        run: |
+          set -euo pipefail
+          TUNNEL_URL=""
+          for attempt in $(seq 1 60); do
+            TUNNEL_URL=$(ssh "$DEMO_VM_SSH_USER@$DEMO_VM_IP" \
+              "journalctl -b -u enterprise-demo-tunnel --no-pager -o cat 2>/dev/null | grep -Eo 'https://[a-z0-9-]+\\.trycloudflare\\.com' | tail -1" || true)
+            if [ -n "$TUNNEL_URL" ]; then
+              break
+            fi
+            sleep 2
+          done
+
+          if [ -z "$TUNNEL_URL" ]; then
+            echo "Quick Tunnel URL was not found. Run deploy/gcp/bootstrap.sh once on the VM." >&2
+            ssh "$DEMO_VM_SSH_USER@$DEMO_VM_IP" \
+              'systemctl status enterprise-demo-tunnel --no-pager || true; journalctl -b -u enterprise-demo-tunnel --no-pager -n 100 || true'
+            exit 1
+          fi
+
+          echo "TUNNEL_URL=$TUNNEL_URL" >> "$GITHUB_ENV"
+          echo "url=$TUNNEL_URL" >> "$GITHUB_OUTPUT"
+
+      - name: Apply public API URL without restarting tunnel
+        shell: bash
+        run: |
+          set -euo pipefail
+          ssh "$DEMO_VM_SSH_USER@$DEMO_VM_IP" "TUNNEL_URL='$TUNNEL_URL' bash -s" <<'EOF'
+          set -euo pipefail
+          cd "$HOME/enterprise-control"
+          if grep -q '^PUBLIC_API_BASE_URL=' .env; then
+            sed -i "s|^PUBLIC_API_BASE_URL=.*|PUBLIC_API_BASE_URL=$TUNNEL_URL|" .env
+          else
+            printf '\nPUBLIC_API_BASE_URL=%s\n' "$TUNNEL_URL" >> .env
+          fi
+          docker compose up -d --no-deps --force-recreate app
+          EOF
+
+          for attempt in $(seq 1 60); do
+            if curl -fsS "$TUNNEL_URL/actuator/health" >/tmp/public-health.json 2>/dev/null; then
+              cat /tmp/public-health.json
+              exit 0
+            fi
+            sleep 2
+          done
+
+          echo "Public tunnel did not become healthy." >&2
+          exit 1
+
+      - name: Checkout staging frontend
+        shell: bash
+        run: |
+          git clone --depth 1 \
+            --branch feature/enterprise-document-control \
+            https://github.com/Yashu7372/whatsapp-crm.git \
+            "$RUNNER_TEMP/whatsapp-crm"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Build frontend against current tunnel
+        working-directory: ${{ runner.temp }}/whatsapp-crm
+        env:
+          VITE_API_BASE_URL: ${{ env.TUNNEL_URL }}/api/v1
+        run: |
+          npm ci
+          npm run build
+          npx eslint src/App.tsx src/enterprise
+
+      - name: Deploy frontend to Cloudflare Pages
+        working-directory: ${{ runner.temp }}/whatsapp-crm
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+        run: |
+          npx --yes wrangler@latest pages deploy dist \
+            --project-name="$CLOUDFLARE_PAGES_PROJECT" \
+            --branch=staging
+
+      - name: Demo summary
+        shell: bash
+        run: |
+          echo "### Demo environment is ready" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Frontend: https://staging.${CLOUDFLARE_PAGES_PROJECT}.pages.dev" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Backend: ${TUNNEL_URL}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- API: ${TUNNEL_URL}/api/v1" >> "$GITHUB_STEP_SUMMARY"
+          echo "- VM: ${GCP_VM_NAME} (${GCP_ZONE})" >> "$GITHUB_STEP_SUMMARY"
+          echo "" >> "$GITHUB_STEP_SUMMARY"
+          echo "When finished, run this workflow again with action=stop." >> "$GITHUB_STEP_SUMMARY"
+
+  stop:
+    name: Stop demo VM
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'stop'
+    runs-on: ubuntu-latest
+
+    env:
+      GCP_PROJECT_ID: ${{ secrets.GCP_PROJECT_ID }}
+      GCP_WORKLOAD_IDENTITY_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+      GCP_SERVICE_ACCOUNT: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+      GCP_ZONE: ${{ vars.GCP_DEMO_ZONE }}
+      GCP_VM_NAME: ${{ vars.GCP_DEMO_VM_NAME }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@v3
+        with:
+          project_id: ${{ secrets.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_SERVICE_ACCOUNT }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Stop Compute Engine VM
+        shell: bash
+        run: |
+          set -euo pipefail
+          STATUS=$(gcloud compute instances describe "$GCP_VM_NAME" \
+            --project="$GCP_PROJECT_ID" --zone="$GCP_ZONE" --format='value(status)')
+
+          if [ "$STATUS" = "RUNNING" ]; then
+            gcloud compute instances stop "$GCP_VM_NAME" \
+              --project="$GCP_PROJECT_ID" --zone="$GCP_ZONE" --quiet
+          else
+            echo "VM is already $STATUS; no stop required."
+          fi
+
+          echo "### Demo environment stopped" >> "$GITHUB_STEP_SUMMARY"
+          echo "- VM: ${GCP_VM_NAME}" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Persistent disk/database remain intact." >> "$GITHUB_STEP_SUMMARY"

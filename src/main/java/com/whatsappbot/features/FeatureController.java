@@ -1,5 +1,6 @@
 package com.whatsappbot.features;
 
+import com.whatsappbot.auth.PermissionService;
 import com.whatsappbot.subscription.TenantSubscriptionEntity;
 import com.whatsappbot.subscription.TenantSubscriptionRepository;
 import io.jsonwebtoken.Claims;
@@ -17,6 +18,8 @@ public class FeatureController {
 
     private final TenantFeatureRepository tenantFeatureRepository;
     private final TenantSubscriptionRepository tenantSubscriptionRepository;
+    private final FeatureCatalogRepository featureCatalogRepository;
+    private final PermissionService permissionService;
 
     @GetMapping("/features")
     public ResponseEntity<FeaturesResponse> getMyFeatures(
@@ -41,6 +44,32 @@ public class FeatureController {
         return ResponseEntity.ok(new FeaturesResponse(tenantId.toString(), plan, status, features));
     }
 
+    @GetMapping("/nav")
+    public ResponseEntity<List<NavItem>> getMyNav(@AuthenticationPrincipal Claims claims) {
+        Object tenantIdClaim = claims.get("tenantId");
+        if (tenantIdClaim == null) {
+            // Platform-scoped admins aren't tenant-scoped; the platform admin
+            // console is a separate follow-up, not part of this nav.
+            return ResponseEntity.ok(List.of());
+        }
+        UUID tenantId = UUID.fromString((String) tenantIdClaim);
+
+        Set<String> enabledFeatureCodes = new HashSet<>(tenantFeatureRepository.findEnabledFeatureCodes(tenantId));
+
+        List<NavItem> items = new ArrayList<>();
+        for (FeatureCatalogEntity fc : featureCatalogRepository.findAllByOrderByModuleAscSortOrderAsc()) {
+            boolean entitled = fc.isCore() || enabledFeatureCodes.contains(fc.getFeatureCode());
+            if (!entitled || !permissionService.canView(claims, fc.getFeatureCode())) {
+                continue;
+            }
+            items.add(new NavItem(fc.getFeatureCode(), fc.getModule(), fc.getNavSection(),
+                    fc.getNavLabel(), fc.getNavIcon(), fc.getRoute(),
+                    permissionService.canManage(claims, fc.getFeatureCode())));
+        }
+
+        return ResponseEntity.ok(items);
+    }
+
     @PatchMapping("/features/{featureCode}")
     public ResponseEntity<Void> toggleFeature(
             @AuthenticationPrincipal Claims claims,
@@ -61,6 +90,15 @@ public class FeatureController {
     }
 
     // ── Records ──────────────────────────────────────────────────────────
+
+    public record NavItem(
+            String featureCode,
+            String module,
+            String navSection,
+            String navLabel,
+            String navIcon,
+            String route,
+            boolean canManage) {}
 
     public record FeaturesResponse(
             String tenantId,

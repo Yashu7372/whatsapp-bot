@@ -48,7 +48,7 @@ ai:
 
   gemini:
     api-key: ${GEMINI_API_KEY:}
-    model-name: ${GEMINI_MODEL:gemini-2.5-flash}
+    model-name: ${GEMINI_MODEL:gemini-3.5-flash}
 
   ollama:
     base-url: ${AI_OLLAMA_BASE_URL:}

@@ -1,0 +1,97 @@
+# ─────────────────────────────────────────────────────────────────────────────
+# Local development stack: postgres + backend + frontend
+# ─────────────────────────────────────────────────────────────────────────────
+# Prerequisites:
+#   1. Copy .env.example → .env and fill in your API keys
+#   2. The whatsapp-crm repo must be checked out at ../whatsapp-crm
+#      (adjust the `context` / volume paths under `frontend` if it lives elsewhere)
+#
+# First-time start (builds both images, ~5 min while Maven/npm download deps):
+#   docker compose -f docker-compose.dev.yml up --build
+#
+# Daily start (images already built):
+#   docker compose -f docker-compose.dev.yml up
+#
+# Pick up backend Java changes (Maven recompiles on restart):
+#   docker compose -f docker-compose.dev.yml restart backend
+#
+# Pick up backend pom.xml / new dependency changes (full image rebuild):
+#   docker compose -f docker-compose.dev.yml up --build backend
+#
+# Frontend changes are picked up instantly via Vite HMR — no restart needed.
+#
+# Full reset including database:
+#   docker compose -f docker-compose.dev.yml down -v
+# ─────────────────────────────────────────────────────────────────────────────
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: whatsapp-bot-postgres
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-whatsapp_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-whatsapp_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-whatsapp_bot}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - whatsapp_bot_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-whatsapp_bot} -d ${POSTGRES_DB:-whatsapp_bot}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - whatsapp_bot_net
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.dev
+    container_name: whatsapp-bot-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DB_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-whatsapp_bot}
+      DB_USERNAME: ${POSTGRES_USER:-whatsapp_bot}
+      DB_PASSWORD: ${POSTGRES_PASSWORD:-whatsapp_bot}
+      SERVER_PORT: 8080
+      MALWARE_SCAN_ENABLED: "false"
+    ports:
+      - "${APP_PORT:-8080}:8080"
+    volumes:
+      - .:/workspace                 # live source mount — Maven sees edits on restart
+      - maven_cache:/root/.m2        # persist downloaded Maven deps across restarts
+    networks:
+      - whatsapp_bot_net
+
+  frontend:
+    build:
+      context: ../whatsapp-crm       # sibling repo — adjust path if yours differs
+      dockerfile: Dockerfile.dev
+    container_name: whatsapp-crm-frontend
+    depends_on:
+      - backend
+    environment:
+      VITE_MOCK: "false"
+      VITE_BACKEND_URL: "http://backend:8080"  # Docker service name resolves inside network
+    ports:
+      - "${FRONTEND_PORT:-5173}:5173"
+    volumes:
+      - ../whatsapp-crm:/app                  # live source mount — Vite HMR picks up changes
+      - crm_node_modules:/app/node_modules    # keeps Linux node_modules isolated from host
+    networks:
+      - whatsapp_bot_net
+
+networks:
+  whatsapp_bot_net:
+    driver: bridge
+
+volumes:
+  whatsapp_bot_pgdata:
+  maven_cache:
+  crm_node_modules:

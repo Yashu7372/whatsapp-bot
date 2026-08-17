@@ -37,6 +37,22 @@ public class DocumentVersionEntity {
     @Column(name = "change_notes", columnDefinition = "text")
     private String changeNotes;
 
+    @Column(name = "revision_code", nullable = false, length = 30)
+    private String revisionCode;
+
+    @Column(name = "issue_status", nullable = false, length = 30)
+    private String issueStatus = "DRAFT";
+
+    @Column(name = "issue_purpose", length = 40)
+    private String issuePurpose;
+
+    @Column(name = "issued_at")
+    private LocalDateTime issuedAt;
+
+    @ManyToOne(fetch = FetchType.LAZY)
+    @JoinColumn(name = "issued_by")
+    private TenantUserEntity issuedBy;
+
     @ManyToOne(fetch = FetchType.LAZY)
     @JoinColumn(name = "created_by")
     private TenantUserEntity createdBy;
@@ -47,5 +63,6 @@ public class DocumentVersionEntity {
     @PrePersist
     void prePersist() {
         createdAt = LocalDateTime.now();
+        if (revisionCode == null) revisionCode = String.format("%02d", versionNum);
     }
 }

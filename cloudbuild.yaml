@@ -30,7 +30,7 @@ steps:
       - --max-instances=5
       - --memory=1Gi
       - --cpu=1
-      - --set-env-vars=SPRING_PROFILES_ACTIVE=prod,GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=me-central1,GEMINI_MODEL=gemini-2.5-flash
+      - --set-env-vars=SPRING_PROFILES_ACTIVE=prod,GCP_PROJECT_ID=$PROJECT_ID,GCP_REGION=me-central1,GEMINI_MODEL=gemini-3.5-flash
       - --set-secrets=DB_URL=DB_URL:latest,DB_USERNAME=DB_USERNAME:latest,DB_PASSWORD=DB_PASSWORD:latest,WHATSAPP_VERIFY_TOKEN=WHATSAPP_VERIFY_TOKEN:latest,WHATSAPP_ACCESS_TOKEN=WHATSAPP_ACCESS_TOKEN:latest,GEMINI_API_KEY=GEMINI_API_KEY:latest
       - --service-account=whatsapp-bot-sa@$PROJECT_ID.iam.gserviceaccount.com
       - --add-cloudsql-instances=$PROJECT_ID:me-central1:whatsapp-bot-db

@@ -33,19 +33,35 @@ public class TenantUserEntity {
     @Column(name = "full_name", length = 200)
     private String fullName;
 
+    /**
+     * Application access role. This deliberately stays small and stable; real project professions
+     * such as Architect, Engineer, Accountant or Document Controller belong in jobTitle/department
+     * and project assignments rather than becoming authorization enums.
+     */
     @Enumerated(EnumType.STRING)
     @Column(name = "role", nullable = false, length = 50)
     private UserRole role = UserRole.ADMIN;
 
-    /**
-     * The company this user works for. Null for tenant staff who are not attached to a
-     * participating organization (platform administrators, for example).
-     */
     @Column(name = "organization_id")
     private UUID organizationId;
 
+    @Column(name = "job_title", length = 160)
+    private String jobTitle;
+
+    @Column(name = "department", length = 120)
+    private String department;
+
     @Column(name = "active", nullable = false)
     private boolean active = true;
+
+    @Column(name = "notification_phone", length = 50)
+    private String notificationPhone;
+
+    @Column(name = "email_notifications_enabled", nullable = false)
+    private boolean emailNotificationsEnabled = true;
+
+    @Column(name = "whatsapp_notifications_enabled", nullable = false)
+    private boolean whatsappNotificationsEnabled = false;
 
     @Column(name = "last_login_at")
     private LocalDateTime lastLoginAt;

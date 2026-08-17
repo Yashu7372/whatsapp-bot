@@ -7,6 +7,7 @@ import com.whatsappbot.domain.tenant.TenantRepository;
 import io.jsonwebtoken.Claims;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -24,6 +25,7 @@ public class CrmAgentController {
     private final TenantRepository tenantRepository;
 
     @GetMapping
+    @PreAuthorize("@perm.view('SETTINGS_TEAM')")
     public ResponseEntity<List<AgentResponse>> list(@AuthenticationPrincipal Claims claims) {
         TenantEntity tenant = getTenant(claims);
         List<AgentResponse> agents = tenantAgentRepository.findByTenantAndActiveTrueOrderByNameAsc(tenant)

@@ -57,7 +57,7 @@ ai:
 
   gemini:
     api-key: ${AI_GEMINI_API_KEY:}
-    model-name: ${AI_GEMINI_MODEL:gemini-2.5-flash}
+    model-name: ${AI_GEMINI_MODEL:gemini-3.5-flash}
 
   ollama:
     # "ollama" resolves via the docker-compose service name when the app
