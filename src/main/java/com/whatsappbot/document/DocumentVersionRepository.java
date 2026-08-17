@@ -7,4 +7,5 @@ import java.util.UUID;
 
 public interface DocumentVersionRepository extends JpaRepository<DocumentVersionEntity, UUID> {
     List<DocumentVersionEntity> findAllByDocumentIdOrderByVersionNumDesc(UUID documentId);
+    List<DocumentVersionEntity> findAllByDocumentIdAndTenant_IdOrderByVersionNumDesc(UUID documentId, UUID tenantId);
 }

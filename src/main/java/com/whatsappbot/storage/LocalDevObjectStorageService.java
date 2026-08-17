@@ -3,8 +3,8 @@ package com.whatsappbot.storage;
 import com.whatsappbot.domain.tenant.TenantRepository;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
+import org.springframework.boot.context.properties.EnableConfigurationProperties;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -26,22 +26,19 @@ import java.util.UUID;
 @Service
 @ConditionalOnProperty(name = "app.storage.provider", havingValue = "local", matchIfMissing = true)
 @RequiredArgsConstructor
+@EnableConfigurationProperties(LocalObjectStorageProperties.class)
 public class LocalDevObjectStorageService implements ObjectStorageService {
 
     private final UploadTokenRepository uploadTokenRepository;
     private final TenantRepository tenantRepository;
     private final StorageService storageService;
-
-    @Value("${app.storage.local-base-url:http://localhost:8080}")
-    private String baseUrl;
-
-    @Value("${app.storage.upload-token-ttl-seconds:900}")
-    private long uploadTokenTtlSeconds;
+    private final LocalObjectStorageProperties storageProperties;
 
     @Override
     @Transactional
     public SignedUploadUrl createUploadUrl(UUID tenantId, String fileName,
                                            String contentType, long sizeBytes) {
+        long uploadTokenTtlSeconds = storageProperties.getUploadTokenTtlSeconds();
         String token = UUID.randomUUID().toString();
         String objectKey = tenantId + "/" + UUID.randomUUID() + "/" + sanitize(fileName);
 
@@ -54,7 +51,7 @@ public class LocalDevObjectStorageService implements ObjectStorageService {
         entity.setExpiresAt(LocalDateTime.now().plusSeconds(uploadTokenTtlSeconds));
         uploadTokenRepository.save(entity);
 
-        String uploadUrl = baseUrl + "/api/v1/storage/local-upload/" + token;
+        String uploadUrl = storageProperties.getLocalBaseUrl() + "/api/v1/storage/local-upload/" + token;
         log.debug("Created local signed upload URL. token={} objectKey={}", token, objectKey);
         return new SignedUploadUrl(uploadUrl, token, objectKey, uploadTokenTtlSeconds);
     }
@@ -80,9 +77,9 @@ public class LocalDevObjectStorageService implements ObjectStorageService {
 
     @Override
     public SignedDownloadUrl createDownloadUrl(UUID tenantId, String objectKey) {
-        String downloadUrl = baseUrl + "/api/v1/storage/local-download/"
+        String downloadUrl = storageProperties.getLocalBaseUrl() + "/api/v1/storage/local-download/"
                 + UUID.randomUUID() + "?key=" + objectKey;
-        return new SignedDownloadUrl(downloadUrl, uploadTokenTtlSeconds);
+        return new SignedDownloadUrl(downloadUrl, storageProperties.getUploadTokenTtlSeconds());
     }
 
     @Override
