@@ -1,0 +1,45 @@
+name: portfolio-validation
+
+on:
+  push:
+    branches:
+      - 'series/ecp-*'
+      - 'feature/portfolio-content-studio'
+  pull_request:
+    paths:
+      - 'portfolio/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Generate and validate article workspaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dirs=(portfolio/articles/ECP-*)
+          test ${#dirs[@]} -gt 0 || { echo "No article workspaces found"; exit 1; }
+          for d in "${dirs[@]}"; do
+            echo "Generating + validating $d"
+            python portfolio/engine/studio.py generate "$d"
+          done
+      - name: Upload generated portfolio artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: portfolio-generated
+          path: |
+            portfolio/articles/ECP-*/article.md
+            portfolio/articles/ECP-*/linkedin.md
+            portfolio/articles/ECP-*/visual.svg
+            portfolio/articles/ECP-*/visual-spec.json
+            portfolio/articles/ECP-*/story.json
+            portfolio/articles/ECP-*/evidence.json
+            portfolio/articles/ECP-*/source-pack.json
+            portfolio/articles/ECP-*/validation.json
