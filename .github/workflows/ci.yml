@@ -38,7 +38,10 @@ jobs:
       WHATSAPP_ACCESS_TOKEN: ci-access-token
       WHATSAPP_MOCK_SEND_ENABLED: "true"
       AI_PROVIDER: GEMINI
-      AI_GEMINI_API_KEY: ""
+      # AiConfig requires a non-blank key to construct the ChatModel bean even though no test in
+      # this suite makes a real Gemini call (WhatsApp sends are mocked above). An empty string
+      # fails that check and breaks full-context tests like EnterpriseProjectControlE2ETest.
+      AI_GEMINI_API_KEY: ci-placeholder-key
       KNOWLEDGE_REBUILD_ON_STARTUP: "false"
 
     steps:
