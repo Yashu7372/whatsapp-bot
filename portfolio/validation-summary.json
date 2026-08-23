@@ -1,0 +1,11 @@
+{
+  "definition_of_done": "all required flags true; no UNSUPPORTED claims; article >= 500 words; LinkedIn variant >= 60 words",
+  "articles": [
+    {"id":"ECP-001","branch":"series/ecp-01-control-plane-foundation","done":true,"local_validation":"PASSED"},
+    {"id":"ECP-002","branch":"series/ecp-02-profile-driven-runtime","done":true,"local_validation":"PASSED"},
+    {"id":"ECP-003","branch":"series/ecp-03-isolated-simulation","done":true,"local_validation":"PASSED"},
+    {"id":"ECP-004","branch":"series/ecp-04-runtime-context","done":true,"local_validation":"PASSED"},
+    {"id":"ECP-005","branch":"series/ecp-05-knowledge-spine","done":true,"local_validation":"PASSED"}
+  ],
+  "note": "GitHub Actions independently regenerates all derived artifacts and fails the workflow if the definition-of-done gate is not satisfied."
+}
