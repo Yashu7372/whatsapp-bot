@@ -1,0 +1,32 @@
+name: portfolio-validation
+
+on:
+  push:
+    branches:
+      - 'series/ecp-*'
+      - 'feature/portfolio-content-studio'
+  pull_request:
+    paths:
+      - 'portfolio/**'
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Validate article workspaces
+        shell: bash
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          dirs=(portfolio/articles/ECP-*)
+          test ${#dirs[@]} -gt 0 || { echo "No article workspaces found"; exit 1; }
+          for d in "${dirs[@]}"; do
+            echo "Validating $d"
+            python portfolio/engine/studio.py validate "$d"
+          done
