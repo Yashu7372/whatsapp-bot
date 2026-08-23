@@ -50,6 +50,7 @@ class EnterpriseProjectControlE2ETest {
     @Autowired WorkflowNotificationDispatcher notificationDispatcher;
     @Autowired WorkflowNotificationService notificationService;
     @Autowired JdbcTemplate jdbc;
+    @Autowired jakarta.persistence.EntityManager entityManager;
 
     @MockBean WhatsAppGraphClient whatsApp;
 
@@ -119,6 +120,12 @@ class EnterpriseProjectControlE2ETest {
         // Client decision closes the approval and the document.
         documentService.decideStep(tenant, CLIENT_DIRECTOR, approval.getId(),
                 "APPROVED", "Client approval granted.");
+
+        // This final decision has no subsequent JPA call to trigger Hibernate's auto-flush (each
+        // earlier decision's writes only became visible to raw JDBC because the *next* decision's
+        // own pessimistic-lock query forced a flush first). Flush explicitly so the checks below
+        // see it too, matching real usage where each request commits its own transaction.
+        entityManager.flush();
 
         String approvalStatus = jdbc.queryForObject(
                 "select status from document_approvals where id=?", String.class, approval.getId());
