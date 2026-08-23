@@ -100,8 +100,10 @@ class EnterpriseProjectControlE2ETest {
 
         int delivered = notificationService.deliverBatch();
         assertThat(delivered).isGreaterThanOrEqualTo(1);
+        // Notification bodies reference the document by its issued code (messages.properties'
+        // approval_assigned template), not its title.
         verify(whatsApp, atLeastOnce()).sendTextMessageChecked(
-                any(), eq("+971500000016"), contains("Kitchen Cabinet Shop Drawing"));
+                any(), eq("+971500000016"), contains(document.getDocumentCode()));
 
         // Contractor document-control gate.
         documentService.decideStep(tenant, CONTRACTOR_DC, approval.getId(),
