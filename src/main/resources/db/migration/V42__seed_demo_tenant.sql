@@ -1,12 +1,13 @@
 -- ============================================================================
--- V41.1 - Seed the DEMO tenant required by the enterprise project-control fixtures
+-- V42 - Seed the DEMO tenant required by the enterprise project-control fixtures
 --
--- V42, V43 and V45 all seed the enterprise demo dataset (organizations, users,
--- projects, work items, budgets, document-control workflows) only when a tenant
--- with tenant_code='DEMO' already exists, and silently no-op otherwise
--- (`SELECT id INTO t ...; IF t IS NULL THEN RETURN; END IF;`). No migration ever
--- created that tenant, so the whole enterprise demo dataset was never seeded and
--- EnterpriseProjectControlE2ETest failed looking it up.
+-- The migrations that follow this one all seed the enterprise demo dataset
+-- (organizations, users, projects, work items, budgets, document-control
+-- workflows) only when a tenant with tenant_code='DEMO' already exists, and
+-- silently no-op otherwise (`SELECT id INTO t ...; IF t IS NULL THEN RETURN;
+-- END IF;`). No migration ever created that tenant, so the whole enterprise
+-- demo dataset was never seeded and EnterpriseProjectControlE2ETest failed
+-- looking it up.
 --
 -- This tenant carries no WhatsApp messaging traffic, so phone_number_id is a
 -- non-routable placeholder. business_type is GENERAL_SUPPORT because the
