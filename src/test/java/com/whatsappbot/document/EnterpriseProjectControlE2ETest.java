@@ -127,10 +127,12 @@ class EnterpriseProjectControlE2ETest {
         assertThat(approvalStatus).isEqualTo("APPROVED");
         assertThat(documentStatus).isEqualTo("APPROVED");
 
-        Integer auditCount = jdbc.queryForObject(
-                "select count(*) from document_audit_events where document_id=?",
-                Integer.class, document.getId());
-        assertThat(auditCount).isGreaterThanOrEqualTo(5);
+        java.util.List<String> auditEventTypes = jdbc.queryForList(
+                "select event_type from document_audit_events where document_id=? order by created_at",
+                String.class, document.getId());
+        assertThat(auditEventTypes).containsExactly(
+                "DOCUMENT_CREATED", "DOCUMENT_SUBMITTED",
+                "APPROVAL_APPROVED", "APPROVAL_APPROVED", "APPROVAL_APPROVED");
     }
 
     private void assertCurrentStep(UUID approvalId, int expected) {
