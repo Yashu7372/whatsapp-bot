@@ -30,3 +30,16 @@ jobs:
             echo "Generating + validating $d"
             python portfolio/engine/studio.py generate "$d"
           done
+      - name: Upload generated portfolio artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: portfolio-generated
+          path: |
+            portfolio/articles/ECP-*/article.md
+            portfolio/articles/ECP-*/linkedin.md
+            portfolio/articles/ECP-*/visual.svg
+            portfolio/articles/ECP-*/visual-spec.json
+            portfolio/articles/ECP-*/story.json
+            portfolio/articles/ECP-*/evidence.json
+            portfolio/articles/ECP-*/source-pack.json
+            portfolio/articles/ECP-*/validation.json
