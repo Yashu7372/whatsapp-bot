@@ -19,6 +19,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Test portfolio validation engine
+        run: python -m unittest discover -s portfolio/engine -p 'test_*.py'
       - name: Generate and validate article workspaces
         shell: bash
         run: |
