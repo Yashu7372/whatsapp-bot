@@ -14,7 +14,7 @@ class VideoGenerationEngineTest {
     @Test
     void facelessPipelineRunsWithoutPresenterAdapter() {
         VideoGenerationEngine engine = new VideoGenerationEngine(
-                happyPathAdapters(true),
+                happyPathAdapters(true, "12.5"),
                 List.of(new DefaultGenerationGate())
         );
         GenerationContext context = context(GenerationMode.FACELESS);
@@ -39,7 +39,7 @@ class VideoGenerationEngineTest {
     @Test
     void presenterModeBlocksWhenNoPresenterAdapterExists() {
         VideoGenerationEngine engine = new VideoGenerationEngine(
-                happyPathAdapters(true),
+                happyPathAdapters(true, "12.5"),
                 List.of(new DefaultGenerationGate())
         );
         GenerationContext context = context(GenerationMode.PRESENTER)
@@ -59,13 +59,11 @@ class VideoGenerationEngineTest {
 
     @Test
     void qaGateRejectsFailedVerification() {
-        List<GenerationAdapter> adapters = happyPathAdapters(false);
         VideoGenerationEngine engine = new VideoGenerationEngine(
-                adapters,
+                happyPathAdapters(false, "12.5"),
                 List.of(new DefaultGenerationGate())
         );
-        GenerationContext context = context(GenerationMode.FACELESS)
-                .withArtifacts(List.of(artifact(GenerationArtifactType.FINAL_VIDEO, "/tmp/final.mp4")));
+        GenerationContext context = renderedContext();
 
         GateRejectedException error = assertThrows(
                 GateRejectedException.class,
@@ -76,7 +74,21 @@ class VideoGenerationEngineTest {
         assertTrue(error.rejectedContext().hasArtifact(GenerationArtifactType.QA_REPORT));
     }
 
-    private List<GenerationAdapter> happyPathAdapters(boolean qaPassed) {
+    @Test
+    void qaGateRejectsTimelineDrift() {
+        VideoGenerationEngine engine = new VideoGenerationEngine(
+                happyPathAdapters(true, "14.0"),
+                List.of(new DefaultGenerationGate())
+        );
+
+        GateRejectedException error = assertThrows(
+                GateRejectedException.class,
+                () -> engine.executeNext(GenerationState.RENDERED, renderedContext())
+        );
+        assertEquals("TIMELINE_DRIFT", error.result().code());
+    }
+
+    private List<GenerationAdapter> happyPathAdapters(boolean qaPassed, String videoDuration) {
         List<GenerationAdapter> adapters = new ArrayList<>();
         adapters.add(adapter(GenerationCapability.CONTENT,
                 artifact(GenerationArtifactType.SCRIPT, "This is the script.")));
@@ -91,7 +103,10 @@ class VideoGenerationEngineTest {
                 artifact(GenerationArtifactType.FINAL_VIDEO, "/tmp/final.mp4")));
         adapters.add(adapter(GenerationCapability.VERIFY,
                 new GenerationArtifact(GenerationArtifactType.QA_REPORT, "qa", "test",
-                        Map.of("passed", Boolean.toString(qaPassed)))));
+                        Map.of(
+                                "passed", Boolean.toString(qaPassed),
+                                "durationSeconds", videoDuration
+                        ))));
         return adapters;
     }
 
@@ -116,6 +131,14 @@ class VideoGenerationEngineTest {
 
     private GenerationArtifact artifact(GenerationArtifactType type, String value) {
         return new GenerationArtifact(type, value, "test", Map.of());
+    }
+
+    private GenerationContext renderedContext() {
+        return context(GenerationMode.FACELESS).withArtifacts(List.of(
+                new GenerationArtifact(GenerationArtifactType.NARRATION_AUDIO, "/tmp/audio.wav", "test",
+                        Map.of("durationSeconds", "12.5")),
+                artifact(GenerationArtifactType.FINAL_VIDEO, "/tmp/final.mp4")
+        ));
     }
 
     private GenerationContext context(GenerationMode mode) {
