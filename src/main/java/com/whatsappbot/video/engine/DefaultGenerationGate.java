@@ -9,6 +9,9 @@ import org.springframework.stereotype.Component;
 @Component
 public class DefaultGenerationGate implements GenerationGate {
 
+    private static final double MAX_RENDER_SECONDS = 90.0;
+    private static final double MAX_TIMELINE_DRIFT_SECONDS = 0.75;
+
     @Override
     public String name() {
         return "default-artifact-gate";
@@ -42,17 +45,17 @@ public class DefaultGenerationGate implements GenerationGate {
         if (audio == null) {
             return GateResult.fail("AUDIO_MISSING", "Audio stage must produce narration audio.");
         }
-        String duration = audio.metadata().get("durationSeconds");
-        if (duration == null || duration.isBlank()) {
-            return GateResult.fail("AUDIO_DURATION_MISSING",
-                    "Narration audio must report its measured duration so it can become the master timeline.");
+        Double duration = numericMetadata(audio, "durationSeconds");
+        if (duration == null) {
+            return GateResult.fail("AUDIO_DURATION_INVALID",
+                    "Narration audio must report a numeric measured duration.");
         }
-        try {
-            if (Double.parseDouble(duration) <= 0) {
-                return GateResult.fail("AUDIO_DURATION_INVALID", "Narration duration must be greater than zero.");
-            }
-        } catch (NumberFormatException e) {
-            return GateResult.fail("AUDIO_DURATION_INVALID", "Narration duration is not numeric.");
+        if (duration <= 0) {
+            return GateResult.fail("AUDIO_DURATION_INVALID", "Narration duration must be greater than zero.");
+        }
+        if (duration > MAX_RENDER_SECONDS) {
+            return GateResult.fail("AUDIO_TOO_LONG",
+                    "Narration exceeds the current 90 second renderer limit and must be shortened before rendering.");
         }
         return GateResult.pass("Narration audio is locked as the master timeline.");
     }
@@ -77,7 +80,31 @@ public class DefaultGenerationGate implements GenerationGate {
         if (!Boolean.parseBoolean(report.metadata().getOrDefault("passed", "false"))) {
             return GateResult.fail("QA_FAILED", "QA report did not pass all required checks.");
         }
-        return GateResult.pass("Video passed final QA.");
+
+        GenerationArtifact audio = context.artifact(GenerationArtifactType.NARRATION_AUDIO).orElse(null);
+        Double audioDuration = audio == null ? null : numericMetadata(audio, "durationSeconds");
+        Double videoDuration = numericMetadata(report, "durationSeconds");
+        if (audioDuration == null || videoDuration == null) {
+            return GateResult.fail("TIMELINE_QA_MISSING",
+                    "Final QA must include both locked narration and rendered video durations.");
+        }
+        if (Math.abs(videoDuration - audioDuration) > MAX_TIMELINE_DRIFT_SECONDS) {
+            return GateResult.fail("TIMELINE_DRIFT",
+                    "Rendered video duration drifted from the locked narration timeline.");
+        }
+        return GateResult.pass("Video passed final QA and matches the locked narration timeline.");
+    }
+
+    private Double numericMetadata(GenerationArtifact artifact, String key) {
+        String value = artifact.metadata().get(key);
+        if (value == null || value.isBlank()) {
+            return null;
+        }
+        try {
+            return Double.parseDouble(value);
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private GateResult require(GenerationContext context, GenerationArtifactType type,
