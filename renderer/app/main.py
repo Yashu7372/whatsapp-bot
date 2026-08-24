@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 from uuid import UUID
@@ -30,7 +31,7 @@ engine = RenderEngine(
     default_voice=os.getenv("KOKORO_DEFAULT_VOICE", "af_heart"),
 )
 
-app = FastAPI(title="WhatsApp CRM Media Renderer", version="1.1.0")
+app = FastAPI(title="WhatsApp CRM Media Renderer", version="1.2.0")
 app.include_router(character_router)
 app.include_router(dialogue_v2_router)
 
@@ -59,6 +60,22 @@ class RenderResponse(BaseModel):
     warnings: list[str] = Field(default_factory=list)
 
 
+class AudioRequest(BaseModel):
+    jobId: UUID
+    tenantId: UUID
+    text: str = Field(min_length=1, max_length=8000)
+    voice: str = "af_heart"
+    targetDurationSeconds: int = Field(default=30, ge=5, le=90)
+    outputPath: str
+
+
+class AudioResponse(BaseModel):
+    status: str
+    outputPath: str
+    durationSeconds: float
+    provider: str
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     from .character_routes import _get_pack, VIDEO_TEMPLATE_ROOT, DRESS_ROOT
@@ -82,6 +99,36 @@ def health() -> dict[str, Any]:
     }
 
 
+@app.post("/v1/audio/generate", response_model=AudioResponse)
+def generate_audio(request: AudioRequest) -> AudioResponse:
+    output = Path(request.outputPath).resolve()
+    if not output.is_relative_to(RENDER_ROOT):
+        raise HTTPException(status_code=422, detail="outputPath must be inside RENDER_ROOT")
+    if output.suffix.lower() != ".wav":
+        raise HTTPException(status_code=422, detail="outputPath must end with .wav")
+
+    output.parent.mkdir(parents=True, exist_ok=True)
+    created = engine._create_voice(
+        request.text.strip(),
+        request.voice.strip() or "af_heart",
+        request.targetDurationSeconds,
+        output,
+    )
+    if not created:
+        raise HTTPException(status_code=422, detail="Narration audio generation failed")
+
+    duration = _probe_duration(output)
+    if duration <= 0:
+        raise HTTPException(status_code=422, detail="Generated narration has invalid duration")
+
+    return AudioResponse(
+        status="COMPLETED",
+        outputPath=str(output),
+        durationSeconds=duration,
+        provider="kokoro",
+    )
+
+
 @app.post("/v1/render", response_model=RenderResponse)
 def render(request: RenderRequest) -> RenderResponse:
     try:
@@ -98,3 +145,25 @@ def render(request: RenderRequest) -> RenderResponse:
     except Exception as exc:
         logger.exception("Unexpected render failure. job=%s", request.jobId)
         raise HTTPException(status_code=500, detail="Renderer failed") from exc
+
+
+def _probe_duration(path: Path) -> float:
+    process = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if process.returncode != 0:
+        logger.warning("Could not probe audio duration: %s", (process.stderr or "")[-1000:])
+        return 0.0
+    try:
+        return float((process.stdout or "0").strip())
+    except ValueError:
+        return 0.0
