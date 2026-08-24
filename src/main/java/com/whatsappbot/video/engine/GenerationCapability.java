@@ -11,6 +11,7 @@ public enum GenerationCapability {
     AUDIO,
     SPEECH_ALIGNMENT,
     VISUAL_PLAN,
+    VISUAL_ASSETS,
     PRESENTER,
     LIP_SYNC,
     COMPOSITION,
