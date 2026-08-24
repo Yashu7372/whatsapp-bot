@@ -20,7 +20,7 @@ public record PipelineStep(
                 new PipelineStep(GenerationState.CONTENT_LOCKED, GenerationState.AUDIO_LOCKED,
                         List.of(GenerationCapability.AUDIO), List.of(GenerationCapability.SPEECH_ALIGNMENT)),
                 new PipelineStep(GenerationState.AUDIO_LOCKED, GenerationState.VISUAL_PLAN_LOCKED,
-                        List.of(GenerationCapability.VISUAL_PLAN), List.of()),
+                        List.of(GenerationCapability.VISUAL_PLAN), List.of(GenerationCapability.VISUAL_ASSETS)),
                 new PipelineStep(GenerationState.VISUAL_PLAN_LOCKED, GenerationState.PRESENTER_GENERATED,
                         List.of(GenerationCapability.PRESENTER), List.of(GenerationCapability.LIP_SYNC)),
                 new PipelineStep(GenerationState.PRESENTER_GENERATED, GenerationState.COMPOSITION_CHECKED,
