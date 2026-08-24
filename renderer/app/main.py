@@ -31,7 +31,7 @@ engine = RenderEngine(
     default_voice=os.getenv("KOKORO_DEFAULT_VOICE", "af_heart"),
 )
 
-app = FastAPI(title="WhatsApp CRM Media Renderer", version="1.2.0")
+app = FastAPI(title="WhatsApp CRM Media Renderer", version="1.3.0")
 app.include_router(character_router)
 app.include_router(dialogue_v2_router)
 
@@ -49,6 +49,7 @@ class RenderRequest(BaseModel):
     voice: str = "af_heart"
     brandName: str = ""
     callToAction: str = ""
+    narrationAudioPath: str = ""
     durationSeconds: int = Field(default=30, ge=5, le=90)
     outputPath: str
 
@@ -76,6 +77,21 @@ class AudioResponse(BaseModel):
     provider: str
 
 
+class VerifyRequest(BaseModel):
+    jobId: UUID
+    tenantId: UUID
+    videoPath: str
+
+
+class VerifyResponse(BaseModel):
+    passed: bool
+    durationSeconds: float
+    width: int
+    height: int
+    sizeBytes: int
+    message: str
+
+
 @app.get("/health")
 def health() -> dict[str, Any]:
     from .character_routes import _get_pack, VIDEO_TEMPLATE_ROOT, DRESS_ROOT
@@ -101,13 +117,9 @@ def health() -> dict[str, Any]:
 
 @app.post("/v1/audio/generate", response_model=AudioResponse)
 def generate_audio(request: AudioRequest) -> AudioResponse:
-    output = Path(request.outputPath).resolve()
-    if not output.is_relative_to(RENDER_ROOT):
-        raise HTTPException(status_code=422, detail="outputPath must be inside RENDER_ROOT")
-    if output.suffix.lower() != ".wav":
-        raise HTTPException(status_code=422, detail="outputPath must end with .wav")
-
+    output = _validated_render_path(request.outputPath, ".wav")
     output.parent.mkdir(parents=True, exist_ok=True)
+
     created = engine._create_voice(
         request.text.strip(),
         request.voice.strip() or "af_heart",
@@ -132,7 +144,17 @@ def generate_audio(request: AudioRequest) -> AudioResponse:
 @app.post("/v1/render", response_model=RenderResponse)
 def render(request: RenderRequest) -> RenderResponse:
     try:
-        result = engine.render(request.model_dump())
+        payload = request.model_dump()
+        narration = None
+        if request.narrationAudioPath.strip():
+            narration = _validated_existing_render_path(request.narrationAudioPath, ".wav")
+            # The canonical narration is already locked. Avoid generating a second TTS track.
+            payload["voiceoverText"] = ""
+
+        result = engine.render(payload)
+        if narration is not None:
+            _replace_audio(result.output_path, narration, result.duration_seconds)
+
         return RenderResponse(
             status="COMPLETED",
             outputPath=str(result.output_path),
@@ -142,9 +164,71 @@ def render(request: RenderRequest) -> RenderResponse:
     except RenderFailure as exc:
         logger.exception("Render failed. job=%s", request.jobId)
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Unexpected render failure. job=%s", request.jobId)
         raise HTTPException(status_code=500, detail="Renderer failed") from exc
+
+
+@app.post("/v1/verify", response_model=VerifyResponse)
+def verify(request: VerifyRequest) -> VerifyResponse:
+    video = _validated_existing_render_path(request.videoPath, ".mp4")
+    duration = _probe_duration(video)
+    width, height = _probe_dimensions(video)
+    size = video.stat().st_size
+    decodes = _decode_check(video)
+    passed = duration > 0 and width > 0 and height > 0 and size > 0 and decodes
+    return VerifyResponse(
+        passed=passed,
+        durationSeconds=duration,
+        width=width,
+        height=height,
+        sizeBytes=size,
+        message="Video passed technical QA." if passed else "Video failed technical QA.",
+    )
+
+
+def _validated_render_path(raw_path: str, suffix: str) -> Path:
+    path = Path(raw_path).resolve()
+    if not path.is_relative_to(RENDER_ROOT):
+        raise HTTPException(status_code=422, detail="path must be inside RENDER_ROOT")
+    if path.suffix.lower() != suffix:
+        raise HTTPException(status_code=422, detail=f"path must end with {suffix}")
+    return path
+
+
+def _validated_existing_render_path(raw_path: str, suffix: str) -> Path:
+    path = _validated_render_path(raw_path, suffix)
+    if not path.is_file():
+        raise HTTPException(status_code=422, detail=f"media file does not exist: {path.name}")
+    return path
+
+
+def _replace_audio(video: Path, narration: Path, duration: float) -> None:
+    partial = video.with_suffix(".audio-lock.mp4")
+    process = subprocess.run(
+        [
+            "ffmpeg", "-y",
+            "-i", str(video),
+            "-i", str(narration),
+            "-map", "0:v:0",
+            "-map", "1:a:0",
+            "-c:v", "copy",
+            "-c:a", "aac",
+            "-b:a", "160k",
+            "-af", "apad",
+            "-t", f"{duration:.3f}",
+            "-movflags", "+faststart",
+            str(partial),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if process.returncode != 0:
+        raise RenderFailure("Could not apply locked narration: " + (process.stderr or "")[-2000:])
+    os.replace(partial, video)
 
 
 def _probe_duration(path: Path) -> float:
@@ -161,9 +245,45 @@ def _probe_duration(path: Path) -> float:
         timeout=30,
     )
     if process.returncode != 0:
-        logger.warning("Could not probe audio duration: %s", (process.stderr or "")[-1000:])
+        logger.warning("Could not probe media duration: %s", (process.stderr or "")[-1000:])
         return 0.0
     try:
         return float((process.stdout or "0").strip())
     except ValueError:
         return 0.0
+
+
+def _probe_dimensions(path: Path) -> tuple[int, int]:
+    process = subprocess.run(
+        [
+            "ffprobe",
+            "-v", "error",
+            "-select_streams", "v:0",
+            "-show_entries", "stream=width,height",
+            "-of", "csv=s=x:p=0",
+            str(path),
+        ],
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if process.returncode != 0:
+        return 0, 0
+    try:
+        width, height = (process.stdout or "0x0").strip().split("x", 1)
+        return int(width), int(height)
+    except (ValueError, TypeError):
+        return 0, 0
+
+
+def _decode_check(path: Path) -> bool:
+    process = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(path), "-f", "null", "-"],
+        capture_output=True,
+        text=True,
+        timeout=600,
+    )
+    if process.returncode != 0:
+        logger.warning("Video decode QA failed: %s", (process.stderr or "")[-1500:])
+        return False
+    return True
