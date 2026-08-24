@@ -152,13 +152,17 @@ def render(request: RenderRequest) -> RenderResponse:
             payload["voiceoverText"] = ""
 
         result = engine.render(payload)
+        final_duration = result.duration_seconds
         if narration is not None:
-            _replace_audio(result.output_path, narration, result.duration_seconds)
+            final_duration = _probe_duration(narration)
+            if final_duration <= 0:
+                raise RenderFailure("Locked narration has invalid duration")
+            _replace_audio(result.output_path, narration, final_duration)
 
         return RenderResponse(
             status="COMPLETED",
             outputPath=str(result.output_path),
-            durationSeconds=result.duration_seconds,
+            durationSeconds=final_duration,
             warnings=result.warnings,
         )
     except RenderFailure as exc:
