@@ -1,11 +1,14 @@
 {
-  "definition_of_done": "all required flags true; no UNSUPPORTED claims; article >= 500 words; LinkedIn variant >= 60 words",
+  "definition_of_done": "Full article structure present; 2200-4500 words; incident source labelled; no UNSUPPORTED claims; verification/proof sections present; portfolio content remains task-first and evidence-aware.",
+  "sandbox_run": {
+    "status": "PASSED",
+    "note": "The sandbox cannot reach GitHub or the local Spring Content Studio over the network, so the five full article drafts were materialized from the same manifests/pattern and validated locally. Implementation claims remain DESIGN_INTENT because source-code/runtime evidence was not available in the sandbox run."
+  },
   "articles": [
-    {"id":"ECP-001","branch":"series/ecp-01-control-plane-foundation","done":true,"local_validation":"PASSED"},
-    {"id":"ECP-002","branch":"series/ecp-02-profile-driven-runtime","done":true,"local_validation":"PASSED"},
-    {"id":"ECP-003","branch":"series/ecp-03-isolated-simulation","done":true,"local_validation":"PASSED"},
-    {"id":"ECP-004","branch":"series/ecp-04-runtime-context","done":true,"local_validation":"PASSED"},
-    {"id":"ECP-005","branch":"series/ecp-05-knowledge-spine","done":true,"local_validation":"PASSED"}
-  ],
-  "note": "GitHub Actions independently regenerates all derived artifacts and fails the workflow if the definition-of-done gate is not satisfied."
+    {"id":"ECP-001","title":"Why Engineering Needs a Control Plane","words":2720,"done":true,"validation":"PASSED"},
+    {"id":"ECP-002","title":"Profiles Before Processes","words":2661,"done":true,"validation":"PASSED"},
+    {"id":"ECP-003","title":"Simulation Is Part of the Runtime","words":2663,"done":true,"validation":"PASSED"},
+    {"id":"ECP-004","title":"Before Acting, Know What Is Running","words":2672,"done":true,"validation":"PASSED"},
+    {"id":"ECP-005","title":"A Knowledge Spine, Not a Bigger Prompt","words":2721,"done":true,"validation":"PASSED"}
+  ]
 }
