@@ -33,6 +33,7 @@ The engine knows capabilities, not vendors:
 - `AUDIO`
 - `SPEECH_ALIGNMENT`
 - `VISUAL_PLAN`
+- `VISUAL_ASSETS`
 - `PRESENTER`
 - `LIP_SYNC`
 - `COMPOSITION`
@@ -61,6 +62,7 @@ Adding or changing a provider should not require editing `VideoGenerationEngine`
 | AUDIO | Kokoro through the Python media worker | Returns measured narration duration. |
 | SPEECH_ALIGNMENT | Optional adapter slot | Add word-level alignment without changing the pipeline. |
 | VISUAL_PLAN | Structured shot list from the generated script | Can later be replaced by a richer planner. |
+| VISUAL_ASSETS | Existing Pexels/Pixabay `StockMediaService` | Optional. If neither provider is configured the pipeline continues without B-roll. |
 | PRESENTER | Adapter slot | Required for `PRESENTER` / `DIALOGUE`; job remains `BLOCKED` when no compatible adapter is installed. |
 | LIP_SYNC | Optional adapter slot | Runs only when an adapter is present and the mode requires it. |
 | COMPOSITION | Deterministic composition manifest | Combines only previously gated artifacts. |
@@ -89,7 +91,7 @@ RENDERED              requires FINAL_VIDEO
 VERIFIED              requires QA_REPORT with passed=true
 ```
 
-More quality gates can be added as independent `GenerationGate` beans. For example, a presenter adapter can add identity, lip-sync or pilot-quality gates without changing the default pipeline.
+Optional capabilities run before the gate for their pipeline layer. They may enrich the artifact set but do not make the core workflow dependent on a provider. More quality gates can be added as independent `GenerationGate` beans. For example, a presenter adapter can add identity, lip-sync or pilot-quality gates without changing the default pipeline.
 
 ## Durable jobs
 
@@ -127,7 +129,8 @@ Example body:
     "voice": "af_heart",
     "templateCode": "PRODUCT_HOOK_V1",
     "brandName": "Example Brand",
-    "callToAction": "Message us to learn more"
+    "callToAction": "Message us to learn more",
+    "stockAssetCount": "4"
   }
 }
 ```
