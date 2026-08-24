@@ -77,7 +77,7 @@ public class VideoGenerationEngine {
             GateResult result = gate.validate(step.to(), working);
             gateResults.add(result);
             if (!result.passed()) {
-                throw new GateRejectedException(step.to(), gate.name(), result);
+                throw new GateRejectedException(step.to(), gate.name(), result, working);
             }
         }
         if (!gateFound) {
