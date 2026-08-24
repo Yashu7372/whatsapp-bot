@@ -28,7 +28,8 @@ public class GenerationJobService {
         job.setTopic(requireText(command.topic(), "topic"));
         job.setMode(command.mode() == null ? GenerationMode.FACELESS : command.mode());
         job.setPlatform(defaultText(command.platform(), "INSTAGRAM"));
-        job.setTargetDurationSeconds(Math.max(5, Math.min(command.targetDurationSeconds(), 90)));
+        int duration = command.targetDurationSeconds() <= 0 ? 30 : command.targetDurationSeconds();
+        job.setTargetDurationSeconds(Math.max(5, Math.min(duration, 90)));
         job.setState(GenerationState.INTAKE);
         job.setStatus(GenerationJobStatus.READY);
         job.setOptions(write(command.options() == null ? Map.of() : command.options()));
