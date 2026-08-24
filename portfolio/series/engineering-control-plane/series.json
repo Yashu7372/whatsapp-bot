@@ -1,19 +1,42 @@
 {
   "id": "engineering-control-plane",
   "name": "Engineering Control Plane",
-  "length": 69,
+  "length": 70,
+  "article_pattern": "engineering-deep-dive-v1",
+  "source": {
+    "base_branch": "feature/portfolio-content-studio"
+  },
+  "publishing": {
+    "github": true,
+    "linkedin": true,
+    "substack": true
+  },
+  "tone": {
+    "technical_depth": "deep",
+    "avoid_hype": true,
+    "humor": {
+      "enabled": true,
+      "type": "dry_engineering_sarcasm",
+      "max_occurrences_per_article": 2
+    }
+  },
   "visual_language": {
-    "primary": "#246BFD",
-    "success": "#287A47",
-    "warning": "#D18A00",
-    "danger": "#C43D3D",
-    "background": "#F7F9FC",
-    "surface": "#FFFFFF"
+    "theme": "engineering-explainer",
+    "density": "high"
   },
   "done_policy": {
-    "all_validation_flags_required": true,
+    "all_validation_stages_required": true,
     "unsupported_claims_allowed": false,
-    "minimum_article_words": 500,
-    "minimum_linkedin_words": 60
+    "minimum_verified_claims": 0,
+    "minimum_article_words": 2200,
+    "maximum_article_words": 4500,
+    "minimum_linkedin_words": 80,
+    "require_incident_source_label": true,
+    "require_task_before_after": true,
+    "require_failure_path": true,
+    "require_tradeoffs": true,
+    "require_verification": true,
+    "require_proof_status": true,
+    "require_programmatic_visual_model": true
   }
 }
