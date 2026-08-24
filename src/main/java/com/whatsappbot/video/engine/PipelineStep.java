@@ -15,7 +15,7 @@ public record PipelineStep(
 
     public static List<PipelineStep> defaultPipeline() {
         return List.of(
-                new PipelineStep(INTAKE(), GenerationState.CONTENT_LOCKED,
+                new PipelineStep(GenerationState.INTAKE, GenerationState.CONTENT_LOCKED,
                         List.of(GenerationCapability.CONTENT), List.of()),
                 new PipelineStep(GenerationState.CONTENT_LOCKED, GenerationState.AUDIO_LOCKED,
                         List.of(GenerationCapability.AUDIO), List.of(GenerationCapability.SPEECH_ALIGNMENT)),
@@ -30,9 +30,5 @@ public record PipelineStep(
                 new PipelineStep(GenerationState.RENDERED, GenerationState.VERIFIED,
                         List.of(GenerationCapability.VERIFY), List.of())
         );
-    }
-
-    private static GenerationState INTAKE() {
-        return GenerationState.INTAKE;
     }
 }
