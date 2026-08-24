@@ -13,43 +13,96 @@ SPEC.loader.exec_module(studio)
 class PortfolioStudioValidationTest(unittest.TestCase):
     def manifest(self, status="VERIFIED"):
         return {
-            "article": {"id":"T-001","branch":"test/branch"},
-            "task": {"id":"REQ","title":"Task"},
-            "story": {},
-            "claims": [{"claim":"claim","status":status,"evidence":["test"]}],
+            "article": {"id": "T-001", "number": 1, "branch": "test/branch", "title": "Test"},
+            "task": {"id": "REQ", "title": "Task"},
+            "source": {},
+            "claims": [{"claim": "claim", "status": status, "evidence": ["test"]}],
         }
 
-    def materialize_required_files(self, d: Path):
-        for name in ("source-pack.json","evidence.json","story.json","visual-spec.json"):
-            (d/name).write_text("{\"ok\":true}\n", encoding="utf-8")
-        (d/"visual.svg").write_text("<svg><text>ok</text></svg>\n", encoding="utf-8")
-        (d/"article.md").write_text(("word " * 520).strip(), encoding="utf-8")
-        (d/"linkedin.md").write_text(("word " * 70).strip(), encoding="utf-8")
+    def series(self):
+        return {
+            "id": "test",
+            "name": "Test Series",
+            "length": 70,
+            "done_policy": {
+                "minimum_article_words": 20,
+                "maximum_article_words": 5000,
+                "minimum_linkedin_words": 10,
+            },
+        }
 
-    def test_done_requires_every_flag(self):
+    def pattern(self):
+        return {
+            "sections": [
+                {"id": "hero", "type": "hero", "required": True},
+                {"id": "incident", "type": "incident", "required": True, "min_words": 2},
+                {"id": "snapshot_before", "type": "task_snapshot", "required": True},
+                {"id": "snapshot_after", "type": "task_snapshot", "required": True},
+                {"id": "verification", "type": "evidence", "required": True},
+            ]
+        }
+
+    def model(self, status="VERIFIED"):
+        sections = [
+            {"id": "hero", "word_count": 5, "content": "hero"},
+            {"id": "incident", "word_count": 5, "content": "generalized incident narrative"},
+            {"id": "snapshot_before", "word_count": 5, "content": "before"},
+            {"id": "snapshot_after", "word_count": 5, "content": "after"},
+            {"id": "verification", "word_count": 5, "content": "verification"},
+        ]
+        return {
+            "article": {"id": "T-001"},
+            "incident_source_type": "generalized",
+            "claims": [{"claim": "claim", "status": status, "evidence": ["test"]}],
+            "sections": sections,
+            "generation_errors": [],
+        }
+
+    def materialize(self, d: Path):
+        (d / "article.md").write_text(("word " * 50).strip(), encoding="utf-8")
+        (d / "linkedin.md").write_text(("word " * 20).strip(), encoding="utf-8")
+        (d / "visual-model.json").write_text('{"sections": []}\n', encoding="utf-8")
+        (d / "visual.html").write_text("<html><body>ok</body></html>\n", encoding="utf-8")
+
+    def test_done_requires_every_stage(self):
         with tempfile.TemporaryDirectory() as td:
-            d=Path(td); self.materialize_required_files(d)
-            old=os.environ.pop("PORTFOLIO_STRICT_BRANCH", None)
+            d = Path(td)
+            self.materialize(d)
+            old = os.environ.pop("PORTFOLIO_STRICT_BRANCH", None)
             try:
-                result=studio.validate(d,self.manifest())
+                result = studio.validate(d, self.manifest(), self.series(), self.pattern(), self.model())
             finally:
-                if old is not None: os.environ["PORTFOLIO_STRICT_BRANCH"]=old
+                if old is not None:
+                    os.environ["PORTFOLIO_STRICT_BRANCH"] = old
             self.assertTrue(result["done"])
-            self.assertTrue(all(result["flags"].values()))
+            self.assertTrue(all(stage["status"] == "PASS" for stage in result["stages"].values()))
 
     def test_unsupported_claim_blocks_done(self):
         with tempfile.TemporaryDirectory() as td:
-            d=Path(td); self.materialize_required_files(d)
-            result=studio.validate(d,self.manifest("UNSUPPORTED"))
+            d = Path(td)
+            self.materialize(d)
+            result = studio.validate(d, self.manifest("UNSUPPORTED"), self.series(), self.pattern(), self.model("UNSUPPORTED"))
             self.assertFalse(result["done"])
-            self.assertFalse(result["flags"]["technical_validation_passed"])
+            self.assertEqual("FAIL", result["stages"]["claim_validation"]["status"])
 
     def test_missing_visual_blocks_done(self):
         with tempfile.TemporaryDirectory() as td:
-            d=Path(td); self.materialize_required_files(d); (d/"visual.svg").unlink()
-            result=studio.validate(d,self.manifest())
+            d = Path(td)
+            self.materialize(d)
+            (d / "visual.html").unlink()
+            result = studio.validate(d, self.manifest(), self.series(), self.pattern(), self.model())
             self.assertFalse(result["done"])
-            self.assertFalse(result["flags"]["visual_rendered"])
+            self.assertEqual("FAIL", result["stages"]["visual_generated"]["status"])
+
+    def test_unlabelled_incident_blocks_done(self):
+        with tempfile.TemporaryDirectory() as td:
+            d = Path(td)
+            self.materialize(d)
+            model = self.model()
+            model["incident_source_type"] = ""
+            result = studio.validate(d, self.manifest(), self.series(), self.pattern(), model)
+            self.assertFalse(result["done"])
+            self.assertEqual("FAIL", result["stages"]["incident_grounded"]["status"])
 
 
 if __name__ == "__main__":
