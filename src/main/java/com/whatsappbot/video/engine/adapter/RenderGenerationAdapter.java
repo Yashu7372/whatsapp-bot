@@ -5,6 +5,7 @@ import com.whatsappbot.video.engine.GenerationArtifact;
 import com.whatsappbot.video.engine.GenerationArtifactType;
 import com.whatsappbot.video.engine.GenerationCapability;
 import com.whatsappbot.video.engine.GenerationContext;
+import com.whatsappbot.video.engine.GenerationMode;
 import com.whatsappbot.video.engine.StageResult;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Component;
@@ -30,7 +31,7 @@ public class RenderGenerationAdapter implements GenerationAdapter {
 
     @Override
     public boolean supports(GenerationContext context) {
-        return renderWorkerClient.enabled();
+        return renderWorkerClient.enabled() && context.mode() == GenerationMode.FACELESS;
     }
 
     @Override
