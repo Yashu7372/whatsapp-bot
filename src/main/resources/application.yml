@@ -75,10 +75,18 @@ app:
   publishing:
     scheduler:
       interval-ms: ${PUBLISHING_SCHEDULER_INTERVAL_MS:30000}
+  video:
+    renderer:
+      enabled: ${VIDEO_RENDERER_ENABLED:true}
+      base-url: ${VIDEO_RENDERER_BASE_URL:http://localhost:8090}
+      output-dir: ${VIDEO_RENDER_OUTPUT_DIR:./local-renders}
+      poll-interval-ms: ${VIDEO_RENDER_POLL_INTERVAL_MS:2000}
+      batch-size: ${VIDEO_RENDER_BATCH_SIZE:2}
+      max-retries: ${VIDEO_RENDER_MAX_RETRIES:3}
+      stuck-recovery-minutes: ${VIDEO_RENDER_STUCK_RECOVERY_MINUTES:15}
   project:
     default-currency: ${PROJECT_DEFAULT_CURRENCY:AED}
     default-retention-percent: ${PROJECT_DEFAULT_RETENTION_PERCENT:10.00}
     default-number-padding: ${PROJECT_DEFAULT_NUMBER_PADDING:4}
     reference-separator: "${PROJECT_REFERENCE_SEPARATOR:-}"
     default-status: ${PROJECT_DEFAULT_STATUS:ACTIVE}
-
