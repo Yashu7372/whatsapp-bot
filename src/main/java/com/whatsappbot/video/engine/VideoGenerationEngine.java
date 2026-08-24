@@ -5,6 +5,7 @@ import org.springframework.stereotype.Service;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Optional;
 
 /**
  * Small orchestration engine: execute capabilities, collect artifacts, run gates,
@@ -58,31 +59,29 @@ public class VideoGenerationEngine {
             if (shouldSkip(capability, working)) {
                 continue;
             }
-            selectAdapter(capability, working).ifPresent(adapter -> {
-                // Optional capability execution is handled below to preserve immutability.
-            });
-            GenerationAdapter optional = selectAdapter(capability, working).orElse(null);
-            if (optional != null) {
-                StageResult result = optional.generate(working);
+            GenerationAdapter adapter = selectAdapter(capability, working).orElse(null);
+            if (adapter != null) {
+                StageResult result = adapter.generate(working);
                 working = working.withArtifacts(result.artifacts());
-                messages.add(optional.name() + ": " + result.message());
+                messages.add(adapter.name() + ": " + result.message());
             }
         }
 
         List<GateResult> gateResults = new ArrayList<>();
-        List<GenerationGate> applicableGates = gates.stream()
-                .filter(gate -> gate.supports(step.to(), working))
-                .toList();
-        if (applicableGates.isEmpty()) {
-            throw new IllegalStateException("No gate configured for target state " + step.to());
-        }
-
-        for (GenerationGate gate : applicableGates) {
+        boolean gateFound = false;
+        for (GenerationGate gate : gates) {
+            if (!gate.supports(step.to(), working)) {
+                continue;
+            }
+            gateFound = true;
             GateResult result = gate.validate(step.to(), working);
             gateResults.add(result);
             if (!result.passed()) {
                 throw new GateRejectedException(step.to(), gate.name(), result);
             }
+        }
+        if (!gateFound) {
+            throw new IllegalStateException("No gate configured for target state " + step.to());
         }
 
         return new ExecutionResult(step.to(), working, gateResults, messages);
@@ -94,7 +93,7 @@ public class VideoGenerationEngine {
                         "No generation adapter is available for capability " + capability + " and mode " + context.mode()));
     }
 
-    private java.util.Optional<GenerationAdapter> selectAdapter(
+    private Optional<GenerationAdapter> selectAdapter(
             GenerationCapability capability,
             GenerationContext context
     ) {
