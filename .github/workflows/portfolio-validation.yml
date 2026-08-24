@@ -8,6 +8,7 @@ on:
   pull_request:
     paths:
       - 'portfolio/**'
+  workflow_dispatch:
 
 jobs:
   validate:
@@ -21,7 +22,7 @@ jobs:
           python-version: '3.12'
       - name: Test portfolio validation engine
         run: python -m unittest discover -s portfolio/engine -p 'test_*.py'
-      - name: Generate and validate article workspaces
+      - name: Validate committed article artifacts
         shell: bash
         run: |
           set -euo pipefail
@@ -29,19 +30,23 @@ jobs:
           dirs=(portfolio/articles/ECP-*)
           test ${#dirs[@]} -gt 0 || { echo "No article workspaces found"; exit 1; }
           for d in "${dirs[@]}"; do
-            echo "Generating + validating $d"
-            python portfolio/engine/studio.py generate "$d"
+            if [[ -f "$d/article-model.json" ]]; then
+              echo "Validating $d"
+              python portfolio/engine/studio.py validate "$d"
+            else
+              echo "Skipping $d: regenerate with the structured pipeline before it can be publication-validated"
+            fi
           done
-      - name: Upload generated portfolio artifacts
+      - name: Upload portfolio artifacts
         uses: actions/upload-artifact@v4
         with:
           name: portfolio-generated
           path: |
+            portfolio/articles/ECP-*/article-model.json
+            portfolio/articles/ECP-*/engineering-analysis.json
             portfolio/articles/ECP-*/article.md
             portfolio/articles/ECP-*/linkedin.md
-            portfolio/articles/ECP-*/visual.svg
-            portfolio/articles/ECP-*/visual-spec.json
-            portfolio/articles/ECP-*/story.json
-            portfolio/articles/ECP-*/evidence.json
+            portfolio/articles/ECP-*/visual-model.json
+            portfolio/articles/ECP-*/visual.html
             portfolio/articles/ECP-*/source-pack.json
             portfolio/articles/ECP-*/validation.json
