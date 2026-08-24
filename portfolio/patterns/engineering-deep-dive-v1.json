@@ -1,0 +1,37 @@
+{
+  "id": "engineering-deep-dive-v1",
+  "description": "Task-first, evidence-aware engineering deep dive for portfolio publishing.",
+  "sections": [
+    {"id":"hero","type":"hero","required":true,"writer":"deterministic"},
+    {"id":"engineering_tension","type":"narrative","required":true,"writer":"grounded_llm","min_words":200,"purpose":"Explain the two engineering forces pulling in opposite directions and why the tension matters."},
+    {"id":"real_problem","type":"narrative","required":true,"writer":"grounded_llm","min_words":180,"purpose":"Turn the tension into a concrete engineering problem."},
+    {"id":"incident","type":"incident","required":true,"writer":"grounded_llm","min_words":140,"policy":{"source_label_required":true,"allowed_source_types":["real","generalized","hypothetical"],"sarcasm":"dry_engineering","max_sarcasm_lines":2}},
+    {"id":"existing_approaches","type":"analysis","required":true,"writer":"grounded_llm","min_words":180,"purpose":"Explain why the naive or common approach is insufficient."},
+    {"id":"system_idea","type":"explanation","required":true,"writer":"grounded_llm","min_words":220,"purpose":"Introduce the capability only after the problem is understood; define responsibility and explicit non-responsibilities."},
+    {"id":"usage","type":"usage","required":true,"writer":"grounded_llm","min_words":150,"purpose":"Explain when this pattern is useful and when it is unnecessary or overkill."},
+    {"id":"concrete_task","type":"task","required":true,"writer":"deterministic"},
+    {"id":"snapshot_before","type":"task_snapshot","required":true,"writer":"deterministic"},
+    {"id":"request_journey","type":"journey","required":true,"writer":"deterministic"},
+    {"id":"decision_point","type":"decision","required":true,"writer":"grounded_llm","min_words":140},
+    {"id":"implementation","type":"implementation","required":true,"writer":"grounded_llm","min_words":300,"source_grounded":true,"require_code_evidence":true},
+    {"id":"tradeoffs","type":"tradeoffs","required":true,"writer":"grounded_llm","min_words":180},
+    {"id":"failure_path","type":"failure_path","required":true,"writer":"grounded_llm","min_words":180},
+    {"id":"snapshot_after","type":"task_snapshot","required":true,"writer":"deterministic"},
+    {"id":"verification","type":"evidence","required":true,"writer":"deterministic"},
+    {"id":"proof_status","type":"proof_status","required":true,"writer":"deterministic"},
+    {"id":"architecture_reference","type":"architecture_reference","required":false,"writer":"grounded_llm","min_words":100},
+    {"id":"industry_usage","type":"industry_usage","required":true,"writer":"grounded_llm","min_words":180},
+    {"id":"takeaway","type":"takeaway","required":true,"writer":"deterministic"},
+    {"id":"next_article","type":"continuation","required":true,"writer":"deterministic"},
+    {"id":"references","type":"references","required":true,"writer":"deterministic"}
+  ],
+  "quality": {
+    "required_sections_from_pattern": true,
+    "unsupported_claims_allowed": 0,
+    "require_incident_source_label": true,
+    "require_task_before_after": true,
+    "require_evidence_table": true,
+    "require_code_reference_for_verified_implementation": true,
+    "minimum_visuals": 1
+  }
+}
