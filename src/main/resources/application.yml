@@ -75,6 +75,9 @@ app:
   publishing:
     scheduler:
       interval-ms: ${PUBLISHING_SCHEDULER_INTERVAL_MS:30000}
+  media:
+    pexels-api-key: ${PEXELS_API_KEY:}
+    pixabay-api-key: ${PIXABAY_API_KEY:}
   video:
     renderer:
       enabled: ${VIDEO_RENDERER_ENABLED:true}
