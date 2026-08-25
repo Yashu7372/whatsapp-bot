@@ -1,0 +1,7 @@
+<section class="scene scene--{{scene.intent}} span-{{scene.display.span}}">
+  <div class="scene__eyebrow">{{scene.intent}}</div>
+  <h2 class="scene__title">{{scene.content.title}}</h2>
+  {{#if scene.show_body}}
+  <div class="scene__body markdown-body">{{{scene.body_html}}}</div>
+  {{/if}}
+</section>
