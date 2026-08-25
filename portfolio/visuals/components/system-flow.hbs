@@ -9,7 +9,7 @@
         </marker>
       </defs>
       {{#each scene.graph.edges}}
-      <path d="{{path}}" class="flow-edge" marker-end="url(#arrow-{{../scene.id}})" />
+      <path d="{{path}}" class="flow-edge" marker-end="url(#arrow-{{@root.scene.id}})" />
       {{/each}}
       {{#each scene.graph.nodes}}
       <g transform="translate({{layout.x}},{{layout.y}})" class="flow-node">
