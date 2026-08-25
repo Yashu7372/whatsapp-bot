@@ -4,9 +4,9 @@ Portfolio-only publishing pipeline inside the Spring Boot `whatsapp-bot` reposit
 
 The canonical flow is:
 
-`source branch -> source-pack.json -> engineering-analysis.json -> article-model.json -> article.md / linkedin.md / visual-model.json / visual.html -> validation.json`
+`source branch -> source-pack.json -> engineering-analysis.json -> article-model.json -> article.md / linkedin.md / visual-model.json -> external visual worker -> visual.html / visual-render.json -> validation.json`
 
-`article-model.json` is the semantic source of truth. Markdown, LinkedIn copy and visuals are projections of that model.
+`article-model.json` is the semantic source of truth. Markdown, LinkedIn copy and `visual-model.json` are projections of that model. `visual-model.json` is renderer-neutral: the Node worker is one renderer implementation, not part of the semantic contract.
 
 ## Article contract
 
@@ -69,6 +69,34 @@ Configure:
 
 Generation fails explicitly when grounded narrative generation is required and Content Studio is unavailable. It does not manufacture fallback article prose.
 
+## Visual architecture
+
+The visual path is intentionally split into small single-purpose stages and composed as a pipeline:
+
+`article-model.json -> visual contract -> visual-model.json -> schema validation -> profile resolution -> graph layout -> template rendering -> artifact write`
+
+The responsibilities are separated as follows:
+
+- `portfolio/engine/visual_model.py` builds the portable `visual-model.json` from declarative rules.
+- `portfolio/visuals/contracts/engineering-visual-v1.json` decides which semantic article sections become scenes and which scenes become composites.
+- `portfolio/visuals/schemas/visual-model.schema.json` defines the portable renderer contract.
+- `portfolio/visuals/profiles/engineering-explainer-v1.json` selects templates, theme tokens and graph-layout parameters.
+- `portfolio/visuals/components/*.hbs` contain component markup.
+- `portfolio/visuals/themes/*.css` contains presentation styling.
+- `portfolio/visual-worker` is the current renderer implementation.
+
+The Node worker uses AJV for contract validation, ELK.js for automatic graph layout, Handlebars for component/template composition and Marked for Markdown rendering. The worker does not know article IDs, article numbers, series length, fixed item counts, fixed text truncation limits or article-specific coordinates.
+
+The `system_flow` visual is a composite scene. Its source sections and sequencing are configured in the visual contract, while ELK.js calculates positions at render time. A different renderer can consume the same `visual-model.json` without changing article generation.
+
+## Local visual-worker setup
+
+Install the renderer dependencies once with `npm --prefix portfolio/visual-worker install`.
+
+Render any already-generated visual model with `node portfolio/visual-worker/src/index.mjs render portfolio/articles/ECP-001/visual-model.json --output portfolio/articles/ECP-001`.
+
+The normal Python generation command invokes the configured renderer automatically after writing `visual-model.json`.
+
 ## Generate one article
 
 `python portfolio/engine/studio.py generate portfolio/articles/ECP-001`
@@ -81,13 +109,15 @@ Generation fails explicitly when grounded narrative generation is required and C
 
 `python portfolio/engine/generate_all.py validate --limit 5`
 
+## Run visual model tests
+
+`python -m unittest portfolio.engine.test_visual_model`
+
+Run the Node visual pipeline tests with `npm --prefix portfolio/visual-worker test`.
+
 ## Strict source-branch validation
 
 `PORTFOLIO_STRICT_BRANCH=true python portfolio/engine/studio.py validate portfolio/articles/ECP-001`
-
-## Visual generation
-
-Visual generation is model-driven. `visual-model.json` lists components and source sections; `visual.html` uses responsive HTML/CSS layout rather than fixed SVG coordinates, item-count limits or string truncation. Browser capture can later export this HTML to PNG/PDF without changing article semantics.
 
 ## Definition of done
 
@@ -99,8 +129,8 @@ Visual generation is model-driven. `visual-model.json` lists components and sour
 - claim/evidence validation
 - article word-depth policy
 - LinkedIn variant policy
-- visual model/render artifact
+- required visual artifacts and renderer PASS status
 - generation completeness
 - optional strict branch match
 
-The quality policy is configured in the series and article-pattern files rather than hardcoded into the engine.
+The quality policy, visual contract, visual profile, renderer command and required artifacts are configuration rather than article-specific renderer code.
