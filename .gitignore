@@ -6,3 +6,5 @@ target/
 .git
 local-uploads/
 .gitignore
+node_modules/
+npm-debug.log*
