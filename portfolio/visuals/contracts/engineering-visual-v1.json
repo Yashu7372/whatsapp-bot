@@ -1,0 +1,117 @@
+{
+  "id": "engineering-visual-v1",
+  "schema_version": 1,
+  "profile": "engineering-explainer-v1",
+  "description": "Renderer-neutral semantic visual contract for task-first engineering articles.",
+  "scene_rules": [
+    {
+      "match": {"section_id": "hero"},
+      "intent": "hero",
+      "order": 10,
+      "display": {"span": "full", "body": "full"},
+      "include": [{"as": "article", "pointer": "/article", "required": true}]
+    },
+    {
+      "match": {"section_id": "engineering_tension"},
+      "intent": "tension",
+      "order": 30,
+      "display": {"span": "half", "body": "full"}
+    },
+    {
+      "match": {"section_id": "incident"},
+      "intent": "incident_callout",
+      "order": 40,
+      "display": {"span": "half", "body": "full"},
+      "include": [{"as": "incident_source_type", "pointer": "/incident_source_type", "required": true}]
+    },
+    {
+      "match": {"section_id": "concrete_task"},
+      "intent": "task_card",
+      "order": 50,
+      "display": {"span": "full", "body": "full"},
+      "include": [{"as": "task", "pointer": "/task", "required": true}]
+    },
+    {
+      "match": {"section_id": "snapshot_before"},
+      "intent": "state_snapshot",
+      "order": 60,
+      "display": {"span": "half", "body": "full"},
+      "include": [{"as": "snapshot", "pointer": "/task/snapshots/before", "required": false}]
+    },
+    {
+      "match": {"section_id": "request_journey"},
+      "intent": "journey",
+      "order": 70,
+      "display": {"span": "full", "body": "full"},
+      "include": [{"as": "journey", "pointer": "/story/journey", "required": false}]
+    },
+    {
+      "match": {"section_id": "decision_point"},
+      "intent": "decision_gate",
+      "order": 80,
+      "display": {"span": "half", "body": "full"},
+      "include": [{"as": "decisions", "pointer": "/story/decisions", "required": false}]
+    },
+    {
+      "match": {"section_id": "tradeoffs"},
+      "intent": "comparison",
+      "order": 90,
+      "display": {"span": "half", "body": "full"}
+    },
+    {
+      "match": {"section_id": "failure_path"},
+      "intent": "failure_path",
+      "order": 100,
+      "display": {"span": "half", "body": "full"}
+    },
+    {
+      "match": {"section_id": "snapshot_after"},
+      "intent": "state_snapshot",
+      "order": 110,
+      "display": {"span": "half", "body": "full"},
+      "include": [{"as": "snapshot", "pointer": "/task/snapshots/after", "required": false}]
+    },
+    {
+      "match": {"section_id": "verification"},
+      "intent": "evidence_gate",
+      "order": 120,
+      "display": {"span": "full", "body": "full"},
+      "include": [{"as": "claims", "pointer": "/claims", "required": true}]
+    },
+    {
+      "match": {"section_id": "proof_status"},
+      "intent": "proof_status",
+      "order": 130,
+      "display": {"span": "full", "body": "full"},
+      "include": [{"as": "claims", "pointer": "/claims", "required": true}]
+    },
+    {
+      "match": {"section_id": "takeaway"},
+      "intent": "takeaway",
+      "order": 140,
+      "display": {"span": "full", "body": "full"}
+    }
+  ],
+  "default_scene": {
+    "enabled": false,
+    "intent": "section",
+    "display": {"span": "half", "body": "full"}
+  },
+  "composites": [
+    {
+      "id": "control-logic",
+      "intent": "system_flow",
+      "title": "Control logic composed from article semantics",
+      "order": 20,
+      "source_sections": ["system_idea", "bounded_context", "request_journey", "decision_point", "verification"],
+      "display": {"span": "full", "body": "none"},
+      "graph": {
+        "engine": "elk",
+        "algorithm": "layered",
+        "direction": "RIGHT",
+        "connect": "sequential",
+        "node_display": "title"
+      }
+    }
+  ]
+}
