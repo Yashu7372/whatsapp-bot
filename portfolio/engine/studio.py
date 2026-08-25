@@ -2,17 +2,22 @@
 from __future__ import annotations
 
 import argparse
-import html
 import json
 import os
 import subprocess
 import sys
-import textwrap
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib import request
 
 ROOT = Path(__file__).resolve().parents[2]
+ENGINE_DIR = Path(__file__).resolve().parent
+if str(ENGINE_DIR) not in sys.path:
+    sys.path.insert(0, str(ENGINE_DIR))
+
+from visual_model import build_visual_model as build_visual_model_from_contract
+from visual_model import required_visual_artifacts, run_configured_renderer
+
 DEFAULT_SERIES = ROOT / "portfolio/series/engineering-control-plane/series.json"
 PATTERN_DIR = ROOT / "portfolio/patterns"
 
@@ -77,7 +82,7 @@ def build_engineering_analysis(manifest: dict, source_pack: dict) -> dict:
     task = manifest["task"]
     claims = manifest.get("claims", [])
     incident = manifest.get("incident", {})
-    analysis = {
+    return {
         "article_id": article["id"],
         "title": article["title"],
         "thesis": article.get("thesis", ""),
@@ -102,8 +107,6 @@ def build_engineering_analysis(manifest: dict, source_pack: dict) -> dict:
         "open_questions": manifest.get("open_questions", []),
         "story": manifest.get("story", {}),
     }
-    save(Path(source_pack_path := manifest.get("_article_dir", ".")) / "engineering-analysis.json" if source_pack_path != "." else Path("/tmp/unused"), analysis) if False else None
-    return analysis
 
 
 def content_studio_generate(prompt: str, manifest: dict) -> str:
@@ -201,7 +204,11 @@ def deterministic_section(section: dict, manifest: dict, analysis: dict, series:
         return article.get("next_article", "")
     if sid == "references":
         source = manifest.get("source", {})
-        refs = [f"- Repository: `{source.get('repository','—')}`", f"- Source branch: `{article.get('branch','—')}`", f"- Base branch: `{source.get('base_branch','—')}`"]
+        refs = [
+            f"- Repository: `{source.get('repository','—')}`",
+            f"- Source branch: `{article.get('branch','—')}`",
+            f"- Base branch: `{source.get('base_branch','—')}`",
+        ]
         refs.extend(f"- Changed file: `{x}`" for x in analysis.get("implementation", {}).get("changed_files", []))
         refs.extend(f"- Commit: `{x}`" for x in analysis.get("implementation", {}).get("commits", []))
         return "\n".join(refs)
@@ -241,6 +248,8 @@ def build_article_model(article_dir: Path, manifest: dict, series: dict, pattern
             "series_length": series["length"],
         },
         "task": manifest["task"],
+        "story": manifest.get("story", {}),
+        "implementation": analysis.get("implementation", {}),
         "incident_source_type": analysis["incident"]["source_type"],
         "claims": manifest.get("claims", []),
         "sections": sections,
@@ -253,8 +262,8 @@ def build_article_model(article_dir: Path, manifest: dict, series: dict, pattern
 
 def render_markdown(model: dict, pattern: dict) -> str:
     by_id = {s["id"]: s for s in model["sections"]}
-    a = model["article"]
-    chunks = [f"# {a['title']}\n"]
+    article = model["article"]
+    chunks = [f"# {article['title']}\n"]
     for contract in pattern["sections"]:
         section = by_id.get(contract["id"])
         if not section:
@@ -266,7 +275,7 @@ def render_markdown(model: dict, pattern: dict) -> str:
 
 
 def render_linkedin(model: dict) -> str:
-    a = model["article"]
+    article = model["article"]
     by_id = {s["id"]: s for s in model["sections"]}
     selected = ["engineering_tension", "incident", "system_idea", "takeaway"]
     body = []
@@ -274,50 +283,11 @@ def render_linkedin(model: dict) -> str:
         content = by_id.get(sid, {}).get("content", "")
         if content:
             body.append(content)
-    return f"{a['title']}\n\n" + "\n\n".join(body) + f"\n\nArticle {a['number']} / {a['series_length']} · {a['series_name']}\n"
+    return f"{article['title']}\n\n" + "\n\n".join(body) + f"\n\nArticle {article['number']} / {article['series_length']} · {article['series_name']}\n"
 
 
 def build_visual_model(model: dict, pattern: dict, series: dict) -> dict:
-    visual_types = {
-        "hero": "hero",
-        "engineering_tension": "tension",
-        "incident": "incident_callout",
-        "task": "task_card",
-        "task_snapshot": "task_snapshot",
-        "journey": "journey",
-        "decision": "decision_gate",
-        "tradeoffs": "comparison",
-        "failure_path": "failure_path",
-        "evidence": "evidence_gate",
-        "proof_status": "proof_status",
-        "takeaway": "takeaway",
-    }
-    sections = []
-    by_id = {s["id"]: s for s in model["sections"]}
-    for contract in pattern["sections"]:
-        component = visual_types.get(contract["type"])
-        if component and contract["id"] in by_id:
-            sections.append({"component": component, "source_section": contract["id"]})
-    visual = {
-        "theme": series.get("visual_language", {}).get("theme", "engineering-explainer"),
-        "density": series.get("visual_language", {}).get("density", "high"),
-        "article": model["article"],
-        "sections": sections,
-    }
-    return visual
-
-
-def render_visual_html(model: dict, visual: dict) -> str:
-    by_id = {s["id"]: s for s in model["sections"]}
-    cards = []
-    for item in visual["sections"]:
-        section = by_id[item["source_section"]]
-        cards.append(f'<section class="card {html.escape(item["component"])}"><div class="eyebrow">{html.escape(section["title"])}</div><div class="content">{html.escape(section["content"])}</div></section>')
-    a = model["article"]
-    return f'''<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>
-:root{{--bg:#f7f9fc;--surface:#fff;--ink:#10233f;--muted:#607086;--accent:#246bfd;--border:#cad5e4}}
-*{{box-sizing:border-box}}body{{margin:0;background:var(--bg);font-family:Inter,Arial,sans-serif;color:var(--ink)}}main{{max-width:1500px;margin:auto;padding:clamp(24px,4vw,64px)}}header{{display:flex;justify-content:space-between;gap:24px;align-items:flex-start;margin-bottom:32px}}h1{{font-size:clamp(40px,6vw,76px);line-height:1;margin:.15em 0}}.series,.badge,.eyebrow{{color:var(--accent);font-weight:800;text-transform:uppercase;letter-spacing:.06em}}.badge{{border:2px solid var(--accent);border-radius:999px;padding:10px 16px;white-space:nowrap}}.grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,360px),1fr));gap:20px;align-items:start}}.card{{background:var(--surface);border:1px solid var(--border);border-radius:18px;padding:24px;min-width:0}}.content{{white-space:pre-wrap;line-height:1.55;margin-top:14px;color:#273a52}}.hero,.journey,.evidence_gate{{grid-column:1/-1}}@media(max-width:700px){{header{{display:block}}.badge{{display:inline-block;margin-top:12px}}}}
-</style></head><body><main><header><div><div class="series">{html.escape(a['series_name'])}</div><h1>{html.escape(a['title'])}</h1></div><div class="badge">Article {a['number']} / {a['series_length']}</div></header><div class="grid">{''.join(cards)}</div></main></body></html>'''
+    return build_visual_model_from_contract(ROOT, model, pattern, series)
 
 
 def validate(article_dir: Path, manifest: dict, series: dict, pattern: dict, model: dict | None = None) -> dict:
@@ -330,7 +300,8 @@ def validate(article_dir: Path, manifest: dict, series: dict, pattern: dict, mod
     generated = {s["id"]: s for s in model.get("sections", [])}
     missing = [sid for sid in required_ids if sid not in generated]
     stages["structure_validated"] = {"status": "PASS" if not missing else "FAIL", "missing": missing}
-    if missing: errors.append(f"missing required sections: {', '.join(missing)}")
+    if missing:
+        errors.append(f"missing required sections: {', '.join(missing)}")
 
     shallow = []
     for contract in pattern["sections"]:
@@ -339,13 +310,15 @@ def validate(article_dir: Path, manifest: dict, series: dict, pattern: dict, mod
         if section and minimum and section.get("word_count", 0) < minimum:
             shallow.append({"section": contract["id"], "words": section.get("word_count", 0), "minimum": minimum})
     stages["section_depth_validated"] = {"status": "PASS" if not shallow else "FAIL", "shallow_sections": shallow}
-    if shallow: errors.append("one or more generated sections are below configured depth")
+    if shallow:
+        errors.append("one or more generated sections are below configured depth")
 
     incident_type = model.get("incident_source_type")
     allowed = {"real", "generalized", "hypothetical"}
     incident_ok = incident_type in allowed
     stages["incident_grounded"] = {"status": "PASS" if incident_ok else "FAIL", "source_type": incident_type}
-    if not incident_ok: errors.append("incident source type must be real, generalized or hypothetical")
+    if not incident_ok:
+        errors.append("incident source type must be real, generalized or hypothetical")
 
     unsupported = [c for c in model.get("claims", []) if c.get("status") == "UNSUPPORTED"]
     verified_without_evidence = [c for c in model.get("claims", []) if c.get("status") == "VERIFIED" and not c.get("evidence")]
@@ -358,8 +331,10 @@ def validate(article_dir: Path, manifest: dict, series: dict, pattern: dict, mod
         "unsupported": len(unsupported),
         "verified_without_evidence": len(verified_without_evidence),
     }
-    if unsupported: errors.append("UNSUPPORTED claims are not publishable")
-    if verified_without_evidence: errors.append("VERIFIED claims require evidence")
+    if unsupported:
+        errors.append("UNSUPPORTED claims are not publishable")
+    if verified_without_evidence:
+        errors.append("VERIFIED claims require evidence")
 
     article_path = article_dir / "article.md"
     words = word_count(article_path.read_text(encoding="utf-8")) if article_path.exists() else 0
@@ -367,32 +342,62 @@ def validate(article_dir: Path, manifest: dict, series: dict, pattern: dict, mod
     maximum = series["done_policy"].get("maximum_article_words", 10**9)
     article_ok = article_path.exists() and minimum <= words <= maximum
     stages["article_rendered"] = {"status": "PASS" if article_ok else "FAIL", "words": words, "minimum": minimum, "maximum": maximum}
-    if not article_ok: errors.append(f"article word count {words} outside configured range {minimum}-{maximum}")
+    if not article_ok:
+        errors.append(f"article word count {words} outside configured range {minimum}-{maximum}")
 
     linkedin_path = article_dir / "linkedin.md"
     linkedin_words = word_count(linkedin_path.read_text(encoding="utf-8")) if linkedin_path.exists() else 0
     linkedin_ok = linkedin_path.exists() and linkedin_words >= series["done_policy"].get("minimum_linkedin_words", 0)
     stages["linkedin_rendered"] = {"status": "PASS" if linkedin_ok else "FAIL", "words": linkedin_words}
-    if not linkedin_ok: errors.append("LinkedIn variant missing or below configured minimum")
+    if not linkedin_ok:
+        errors.append("LinkedIn variant missing or below configured minimum")
 
-    visual_files = [article_dir / "visual-model.json", article_dir / "visual.html"]
-    visual_ok = all(p.exists() and p.stat().st_size > 20 for p in visual_files)
-    stages["visual_generated"] = {"status": "PASS" if visual_ok else "FAIL", "artifacts": [p.name for p in visual_files]}
-    if not visual_ok: errors.append("visual model/html missing")
+    artifact_names = required_visual_artifacts(series)
+    visual_files = [article_dir / name for name in artifact_names]
+    artifacts_ok = all(path.exists() and path.stat().st_size > 20 for path in visual_files)
+    renderer_ok = True
+    render_report_path = article_dir / "visual-render.json"
+    render_report = None
+    if render_report_path.exists():
+        try:
+            render_report = load(render_report_path)
+            renderer_ok = render_report.get("status") == "PASS"
+        except Exception as exc:
+            renderer_ok = False
+            warnings.append(f"could not parse visual-render.json: {exc}")
+    elif "visual-render.json" in artifact_names:
+        renderer_ok = False
+    visual_ok = artifacts_ok and renderer_ok
+    stages["visual_generated"] = {
+        "status": "PASS" if visual_ok else "FAIL",
+        "artifacts": artifact_names,
+        "renderer_status": render_report.get("status") if render_report else None,
+    }
+    if not visual_ok:
+        errors.append("required visual artifacts are missing or visual renderer failed")
 
     generation_errors = model.get("generation_errors", [])
     stages["generation_complete"] = {"status": "PASS" if not generation_errors else "FAIL", "errors": generation_errors}
-    if generation_errors: errors.append("one or more article sections failed generation")
+    if generation_errors:
+        errors.append("one or more article sections failed generation")
 
     strict = os.getenv("PORTFOLIO_STRICT_BRANCH", "false").lower() == "true"
     expected = manifest["article"].get("branch")
     current = git("branch", "--show-current", allow_fail=True)
     branch_ok = (not strict) or not expected or current == expected
     stages["branch_validated"] = {"status": "PASS" if branch_ok else "FAIL", "expected": expected, "actual": current, "strict": strict}
-    if not branch_ok: errors.append(f"branch mismatch expected={expected} actual={current}")
+    if not branch_ok:
+        errors.append(f"branch mismatch expected={expected} actual={current}")
 
     done = all(value["status"] == "PASS" for value in stages.values())
-    result = {"article_id": manifest["article"]["id"], "stages": stages, "done": done, "errors": errors, "warnings": warnings, "validated_at": now()}
+    result = {
+        "article_id": manifest["article"]["id"],
+        "stages": stages,
+        "done": done,
+        "errors": errors,
+        "warnings": warnings,
+        "validated_at": now(),
+    }
     save(article_dir / "validation.json", result)
     return result
 
@@ -408,7 +413,7 @@ def generate(article_dir: Path) -> dict:
     (article_dir / "linkedin.md").write_text(render_linkedin(model), encoding="utf-8")
     visual = build_visual_model(model, pattern, series)
     save(article_dir / "visual-model.json", visual)
-    (article_dir / "visual.html").write_text(render_visual_html(model, visual), encoding="utf-8")
+    run_configured_renderer(ROOT, article_dir, series)
     return validate(article_dir, manifest, series, pattern, model)
 
 
@@ -416,8 +421,8 @@ def main():
     parser = argparse.ArgumentParser()
     sub = parser.add_subparsers(dest="command", required=True)
     for command in ("generate", "validate"):
-        p = sub.add_parser(command)
-        p.add_argument("article_dir")
+        subparser = sub.add_parser(command)
+        subparser.add_argument("article_dir")
     args = parser.parse_args()
     article_dir = Path(args.article_dir).resolve()
     manifest = load(article_dir / "manifest.json")
