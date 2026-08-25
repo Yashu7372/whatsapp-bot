@@ -20,6 +20,6 @@ export async function runPipeline(initialContext, stages = DEFAULT_STAGES) {
   return context;
 }
 
-export async function renderVisual({ input, output }) {
-  return runPipeline({ input, output });
+export async function renderVisual(context) {
+  return runPipeline(context);
 }
