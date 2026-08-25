@@ -1,0 +1,17 @@
+{
+  "name": "portfolio-visual-worker",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Renderer implementation for portable portfolio visual-model.json artifacts.",
+  "scripts": {
+    "render": "node src/index.mjs render",
+    "test": "node --test"
+  },
+  "dependencies": {
+    "ajv": "^8.17.1",
+    "elkjs": "^0.10.0",
+    "handlebars": "^4.7.8",
+    "marked": "^15.0.7"
+  }
+}
