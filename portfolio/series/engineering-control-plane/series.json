@@ -22,7 +22,25 @@
   },
   "visual_language": {
     "theme": "engineering-explainer",
-    "density": "high"
+    "density": "high",
+    "contract": "portfolio/visuals/contracts/engineering-visual-v1.json",
+    "profile": "engineering-explainer-v1",
+    "renderer": {
+      "enabled": true,
+      "command": [
+        "node",
+        "portfolio/visual-worker/src/index.mjs",
+        "render",
+        "{visual_model}",
+        "--output",
+        "{article_dir}"
+      ],
+      "required_artifacts": [
+        "visual-model.json",
+        "visual.html",
+        "visual-render.json"
+      ]
+    }
   },
   "done_policy": {
     "all_validation_stages_required": true,
