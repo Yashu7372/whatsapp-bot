@@ -1,9 +1,13 @@
+import importlib.util
 import json
 import tempfile
 import unittest
 from pathlib import Path
 
-from visual_model import build_visual_model
+SPEC = importlib.util.spec_from_file_location("portfolio_visual_model", Path(__file__).with_name("visual_model.py"))
+visual_model = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(visual_model)
+build_visual_model = visual_model.build_visual_model
 
 
 class VisualModelContractTest(unittest.TestCase):
