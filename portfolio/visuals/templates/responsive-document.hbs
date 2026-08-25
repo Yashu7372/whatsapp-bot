@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{document.title}}</title>
+  <style>{{{stylesheet}}}</style>
+</head>
+<body style="{{{token_style}}}">
+  <main class="visual-document">
+    <header class="masthead">
+      <div>
+        <div class="masthead__series">{{document.series_name}}</div>
+        <div class="masthead__meta">Article {{document.number}} / {{document.series_length}}</div>
+      </div>
+      <div class="masthead__id">{{document.id}}</div>
+    </header>
+    <div class="visual-grid">
+      {{{scenes_html}}}
+    </div>
+  </main>
+</body>
+</html>
