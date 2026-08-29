@@ -3,7 +3,7 @@ package com.yashu.projectcontrol;
 import com.yashu.projectcontrol.commercial.CommercialService;
 import com.yashu.projectcontrol.cost.CostService;
 import com.yashu.projectcontrol.document.DocumentService;
-import com.yashu.projectcontrol.financial.FinancialReadService;
+import com.yashu.projectcontrol.financialreporting.FinancialReadService;
 import com.yashu.projectcontrol.access.IdentityService;
 import com.yashu.projectcontrol.organization.OrganizationService;
 import com.yashu.projectcontrol.participation.ParticipationService;
@@ -207,7 +207,7 @@ class FinancialControlAndBillingIntegrationTest {
         // Reverse trace reaches the controlled revision today, and explicitly reserves typed
         // VerificationPackage/Measurement IDs for their frozen later foundations.
         var trace = commercialService.paymentTrace(clientUser.id(), project.id(), payment.id());
-        assertEquals("IPC_001", trace.paymentApplication().applicationNumber());
+        assertEquals("IPC-001", trace.paymentApplication().applicationNumber());
         assertEquals(1, trace.lines().size());
         assertEquals(evidenceRevision.id(), trace.lines().getFirst().controlledEvidence().revisionId());
         assertNull(trace.lines().getFirst().verificationPackageId());
