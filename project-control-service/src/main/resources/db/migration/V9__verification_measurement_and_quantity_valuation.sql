@@ -57,7 +57,10 @@ CREATE TABLE verification_workflow_instances (
     workflow_instance_id UUID NOT NULL,
     created_at TIMESTAMP WITH TIME ZONE NOT NULL,
     CONSTRAINT fk_verification_workflow_package FOREIGN KEY (verification_package_id) REFERENCES verification_packages(id),
-    CONSTRAINT fk_verification_workflow_instance FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id),
+    -- Workflow creation is JPA-backed while this typed link is JDBC-backed in the same transaction.
+    -- Defer this FK until commit so PostgreSQL validates it after the persistence context flushes,
+    -- without weakening referential integrity or introducing a second workflow persistence path.
+    CONSTRAINT fk_verification_workflow_instance FOREIGN KEY (workflow_instance_id) REFERENCES workflow_instances(id) DEFERRABLE INITIALLY DEFERRED,
     CONSTRAINT uk_verification_workflow_instance UNIQUE (workflow_instance_id),
     CONSTRAINT uk_verification_workflow_pair UNIQUE (verification_package_id, workflow_instance_id)
 );
