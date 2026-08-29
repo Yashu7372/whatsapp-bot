@@ -6,6 +6,7 @@ import com.yashu.projectcontrol.cost.CostService;
 import com.yashu.projectcontrol.financial.FinancialAccessService;
 import com.yashu.projectcontrol.project.ProjectService;
 import com.yashu.projectcontrol.scope.ScopeService;
+import com.yashu.projectcontrol.verification.VerificationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -33,6 +34,7 @@ public class FinancialReadService {
     private final ScopeService scopeService;
     private final CostService costService;
     private final CommercialService commercialService;
+    private final VerificationService verificationService;
 
     public FinancialReadService(
             FinancialReadRepository repository,
@@ -41,7 +43,8 @@ public class FinancialReadService {
             ProjectService projectService,
             ScopeService scopeService,
             CostService costService,
-            CommercialService commercialService) {
+            CommercialService commercialService,
+            VerificationService verificationService) {
         this.repository = repository;
         this.financialAccessService = financialAccessService;
         this.projectAccessService = projectAccessService;
@@ -49,6 +52,7 @@ public class FinancialReadService {
         this.scopeService = scopeService;
         this.costService = costService;
         this.commercialService = commercialService;
+        this.verificationService = verificationService;
     }
 
     @Transactional(readOnly = true)
@@ -70,7 +74,8 @@ public class FinancialReadService {
                         actorUserId, SCOPE_VIEW, projectId, scope.id()).outcome() == ALLOW)
                 .map(scope -> new ScopeFinancialView(
                         scope.id(), scope.parentScopeId(), scope.scopeType(), scope.code(), scope.name(),
-                        costService.scopeSummary(actorUserId, projectId, owningOrganizationId, scope.id())))
+                        costService.scopeSummary(actorUserId, projectId, owningOrganizationId, scope.id()),
+                        verificationService.scopeSummary(actorUserId, projectId, scope.id())))
                 .toList();
 
         List<CbsStructureView> cbs = costService.listStructures(actorUserId, projectId, owningOrganizationId).stream()
@@ -103,7 +108,7 @@ public class FinancialReadService {
                 scopeViews,
                 cbs,
                 contracts,
-                "Scope and CBS are separate dimensions. Contract values are a separate commercial perspective and are not added to internal cost totals.");
+                "Scope, verification/measurement, CBS and contracts remain separate dimensions. Accepted measurement can feed valuation, but contract values are never added to internal cost totals.");
     }
 
     @Transactional(readOnly = true)
@@ -173,7 +178,8 @@ public class FinancialReadService {
             String scopeType,
             String scopeCode,
             String scopeName,
-            CostService.ScopeCostSummary directLedgerSummary) {}
+            CostService.ScopeCostSummary directLedgerSummary,
+            VerificationService.ScopeVerificationSummary verificationSummary) {}
 
     public record CbsStructureView(
             CostService.StructureView structure,
