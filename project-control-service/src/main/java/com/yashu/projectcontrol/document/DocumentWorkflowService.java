@@ -65,6 +65,11 @@ public class DocumentWorkflowService {
         accessService.require(userId, DOCUMENT_VIEW, document.projectId(), document.primaryScopeId());
         return repository.findByDocumentIdOrderByCreatedAtAsc(documentId).stream()
                 .map(link -> workflowService.getInstance(link.getWorkflowInstanceId()))
+                .filter(instance -> accessService.canViewWorkflowStep(
+                        userId,
+                        instance.projectId(),
+                        instance.scopeId(),
+                        instance.currentStep() == null ? "{}" : instance.currentStep().assignmentJson()))
                 .toList();
     }
 }
