@@ -1,0 +1,31 @@
+name: Project Control Foundation
+
+on:
+  push:
+    branches:
+      - feature/project-control-modulith-foundation
+    paths:
+      - 'project-control-service/**'
+      - '.github/workflows/project-control-foundation.yml'
+  pull_request:
+    paths:
+      - 'project-control-service/**'
+      - '.github/workflows/project-control-foundation.yml'
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: project-control-service
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Set up Java 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+      - name: Verify foundation
+        run: mvn -B clean verify
