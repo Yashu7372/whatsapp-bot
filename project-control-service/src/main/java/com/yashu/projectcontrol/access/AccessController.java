@@ -40,14 +40,24 @@ public class AccessController {
     }
 
     @GetMapping("/workflow-options")
-    public ProjectAccessService.WorkflowConfigurationOptions workflowOptions(
+    public WorkflowOptionsView workflowOptions(
             @PathVariable UUID projectId,
             @RequestParam UUID scopeId,
             @AuthenticationPrincipal ProjectControlPrincipal principal) {
-        return accessService.workflowConfigurationOptions(principal.userId(), projectId, scopeId);
+        var options = accessService.workflowConfigurationOptions(principal.userId(), projectId, scopeId);
+        return new WorkflowOptionsView(
+                projectId, scopeId, options.assignments(),
+                options.enabledCapabilities(), options.completionActions());
     }
 
     public record DecisionView(String outcome, String reason) {}
+
+    public record WorkflowOptionsView(
+            UUID projectId,
+            UUID scopeId,
+            java.util.List<ProjectAccessService.WorkflowAssignmentOption> assignments,
+            java.util.List<String> enabledCapabilities,
+            java.util.List<String> completionActions) {}
 
     public record AccessView(
             UUID userId,
