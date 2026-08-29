@@ -33,6 +33,9 @@ public class Document {
     @Column(name = "number_source", nullable = false, length = 32)
     private DocumentNumberSource numberSource;
 
+    @Column(name = "number_series_code", length = 100)
+    private String numberSeriesCode;
+
     @Column(name = "document_type", nullable = false, length = 100)
     private String documentType;
 
@@ -42,20 +45,11 @@ public class Document {
     @Column(columnDefinition = "text")
     private String description;
 
-    @Column(length = 80)
-    private String discipline;
-
-    @Column(name = "package_code", length = 80)
-    private String packageCode;
-
-    @Column(name = "location_code", length = 80)
-    private String locationCode;
-
-    @Column(name = "issue_purpose", length = 80)
-    private String issuePurpose;
-
     @Column(name = "classification_code", length = 80)
     private String classificationCode;
+
+    @Column(name = "metadata_json", nullable = false, columnDefinition = "text")
+    private String metadataJson;
 
     @Enumerated(EnumType.STRING)
     @Column(nullable = false, length = 32)
@@ -77,25 +71,22 @@ public class Document {
     }
 
     private Document(UUID id, UUID projectId, UUID primaryScopeId, UUID originatorOrganizationId,
-                     String documentNumber, DocumentNumberSource numberSource, String documentType,
-                     String title, String description, String discipline, String packageCode,
-                     String locationCode, String issuePurpose, String classificationCode,
-                     DocumentStatus status, int currentRevisionSequence, String currentRevisionCode,
-                     Instant createdAt, Instant updatedAt) {
+                     String documentNumber, DocumentNumberSource numberSource, String numberSeriesCode,
+                     String documentType, String title, String description, String classificationCode,
+                     String metadataJson, DocumentStatus status, int currentRevisionSequence,
+                     String currentRevisionCode, Instant createdAt, Instant updatedAt) {
         this.id = id;
         this.projectId = projectId;
         this.primaryScopeId = primaryScopeId;
         this.originatorOrganizationId = originatorOrganizationId;
         this.documentNumber = documentNumber;
         this.numberSource = numberSource;
+        this.numberSeriesCode = numberSeriesCode;
         this.documentType = documentType;
         this.title = title;
         this.description = description;
-        this.discipline = discipline;
-        this.packageCode = packageCode;
-        this.locationCode = locationCode;
-        this.issuePurpose = issuePurpose;
         this.classificationCode = classificationCode;
+        this.metadataJson = metadataJson;
         this.status = status;
         this.currentRevisionSequence = currentRevisionSequence;
         this.currentRevisionCode = currentRevisionCode;
@@ -104,13 +95,13 @@ public class Document {
     }
 
     static Document create(UUID projectId, UUID primaryScopeId, UUID originatorOrganizationId,
-                           String documentNumber, DocumentNumberSource numberSource, String documentType,
-                           String title, String description, String discipline, String packageCode,
-                           String locationCode, String issuePurpose, String classificationCode) {
+                           String documentNumber, DocumentNumberSource numberSource, String numberSeriesCode,
+                           String documentType, String title, String description, String classificationCode,
+                           String metadataJson) {
         Instant now = Instant.now();
         return new Document(UUID.randomUUID(), projectId, primaryScopeId, originatorOrganizationId,
-                documentNumber, numberSource, documentType, title, description, discipline, packageCode,
-                locationCode, issuePurpose, classificationCode, DocumentStatus.DRAFT, 0, null, now, now);
+                documentNumber, numberSource, numberSeriesCode, documentType, title, description,
+                classificationCode, metadataJson, DocumentStatus.DRAFT, 0, null, now, now);
     }
 
     void advanceRevision(int sequence, String revisionCode) {
@@ -128,14 +119,12 @@ public class Document {
     public UUID getOriginatorOrganizationId() { return originatorOrganizationId; }
     public String getDocumentNumber() { return documentNumber; }
     public DocumentNumberSource getNumberSource() { return numberSource; }
+    public String getNumberSeriesCode() { return numberSeriesCode; }
     public String getDocumentType() { return documentType; }
     public String getTitle() { return title; }
     public String getDescription() { return description; }
-    public String getDiscipline() { return discipline; }
-    public String getPackageCode() { return packageCode; }
-    public String getLocationCode() { return locationCode; }
-    public String getIssuePurpose() { return issuePurpose; }
     public String getClassificationCode() { return classificationCode; }
+    public String getMetadataJson() { return metadataJson; }
     public DocumentStatus getStatus() { return status; }
     public int getCurrentRevisionSequence() { return currentRevisionSequence; }
     public String getCurrentRevisionCode() { return currentRevisionCode; }

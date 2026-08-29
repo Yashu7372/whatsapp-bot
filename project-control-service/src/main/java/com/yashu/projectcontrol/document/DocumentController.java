@@ -28,7 +28,12 @@ public class DocumentController {
             @PathVariable UUID projectId,
             @RequestBody DefineSeriesRequest request) {
         return ResponseEntity.ok(numberService.defineSeries(
-                projectId, request.documentType(), request.prefix(), request.padding(), request.separator()));
+                projectId,
+                request.seriesCode(),
+                request.documentType(),
+                request.prefix(),
+                request.padding(),
+                request.separator()));
     }
 
     @GetMapping("/projects/{projectId}/document-number-series")
@@ -45,14 +50,12 @@ public class DocumentController {
                 request.primaryScopeId(),
                 request.originatorOrganizationId(),
                 request.documentNumber(),
+                request.numberSeriesCode(),
                 request.documentType(),
                 request.title(),
                 request.description(),
-                request.discipline(),
-                request.packageCode(),
-                request.locationCode(),
-                request.issuePurpose(),
-                request.classificationCode()));
+                request.classificationCode(),
+                request.metadataJson()));
     }
 
     @GetMapping("/projects/{projectId}/documents")
@@ -85,39 +88,24 @@ public class DocumentController {
         return ResponseEntity.ok(documentService.listRevisions(documentId));
     }
 
-    @PostMapping("/documents/{documentId}/links")
-    public ResponseEntity<DocumentService.LinkView> addLink(
-            @PathVariable UUID documentId,
-            @RequestBody AddLinkRequest request) {
-        return ResponseEntity.ok(documentService.addLink(
-                documentId,
-                request.revisionId(),
-                request.relationshipType(),
-                request.targetType(),
-                request.targetId(),
-                request.targetReference()));
-    }
-
-    @GetMapping("/documents/{documentId}/links")
-    public ResponseEntity<List<DocumentService.LinkView>> links(@PathVariable UUID documentId) {
-        return ResponseEntity.ok(documentService.listLinks(documentId));
-    }
-
-    public record DefineSeriesRequest(String documentType, String prefix, Integer padding, String separator) {
+    public record DefineSeriesRequest(
+            String seriesCode,
+            String documentType,
+            String prefix,
+            Integer padding,
+            String separator) {
     }
 
     public record CreateDocumentRequest(
             UUID primaryScopeId,
             UUID originatorOrganizationId,
             String documentNumber,
+            String numberSeriesCode,
             String documentType,
             String title,
             String description,
-            String discipline,
-            String packageCode,
-            String locationCode,
-            String issuePurpose,
-            String classificationCode) {
+            String classificationCode,
+            String metadataJson) {
     }
 
     public record AddRevisionRequest(
@@ -128,13 +116,5 @@ public class DocumentController {
             String originalFilename,
             String mediaType,
             Long sizeBytes) {
-    }
-
-    public record AddLinkRequest(
-            UUID revisionId,
-            String relationshipType,
-            String targetType,
-            UUID targetId,
-            String targetReference) {
     }
 }

@@ -18,6 +18,9 @@ public class DocumentNumberSeries {
     @Column(name = "project_id", nullable = false)
     private UUID projectId;
 
+    @Column(name = "series_code", nullable = false, length = 100)
+    private String seriesCode;
+
     @Column(name = "document_type", nullable = false, length = 100)
     private String documentType;
 
@@ -42,10 +45,12 @@ public class DocumentNumberSeries {
     protected DocumentNumberSeries() {
     }
 
-    private DocumentNumberSeries(UUID id, UUID projectId, String documentType, String prefix,
-                                 String separator, int nextNumber, int padding, Instant createdAt, Instant updatedAt) {
+    private DocumentNumberSeries(UUID id, UUID projectId, String seriesCode, String documentType,
+                                 String prefix, String separator, int nextNumber, int padding,
+                                 Instant createdAt, Instant updatedAt) {
         this.id = id;
         this.projectId = projectId;
+        this.seriesCode = seriesCode;
         this.documentType = documentType;
         this.prefix = prefix;
         this.separator = separator;
@@ -55,12 +60,15 @@ public class DocumentNumberSeries {
         this.updatedAt = updatedAt;
     }
 
-    static DocumentNumberSeries create(UUID projectId, String documentType, String prefix, String separator, int padding) {
+    static DocumentNumberSeries create(UUID projectId, String seriesCode, String documentType,
+                                       String prefix, String separator, int padding) {
         Instant now = Instant.now();
-        return new DocumentNumberSeries(UUID.randomUUID(), projectId, documentType, prefix, separator, 1, padding, now, now);
+        return new DocumentNumberSeries(UUID.randomUUID(), projectId, seriesCode, documentType,
+                prefix, separator, 1, padding, now, now);
     }
 
-    void configure(String prefix, String separator, int padding) {
+    void configure(String documentType, String prefix, String separator, int padding) {
+        this.documentType = documentType;
         this.prefix = prefix;
         this.separator = separator;
         this.padding = padding;
@@ -76,6 +84,7 @@ public class DocumentNumberSeries {
 
     public UUID getId() { return id; }
     public UUID getProjectId() { return projectId; }
+    public String getSeriesCode() { return seriesCode; }
     public String getDocumentType() { return documentType; }
     public String getPrefix() { return prefix; }
     public String getSeparator() { return separator; }

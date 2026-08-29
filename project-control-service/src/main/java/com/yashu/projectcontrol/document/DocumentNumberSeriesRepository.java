@@ -12,12 +12,12 @@ import java.util.UUID;
 
 public interface DocumentNumberSeriesRepository extends JpaRepository<DocumentNumberSeries, UUID> {
 
-    Optional<DocumentNumberSeries> findByProjectIdAndDocumentType(UUID projectId, String documentType);
+    Optional<DocumentNumberSeries> findByProjectIdAndSeriesCode(UUID projectId, String seriesCode);
 
-    List<DocumentNumberSeries> findByProjectIdOrderByDocumentTypeAsc(UUID projectId);
+    List<DocumentNumberSeries> findByProjectIdOrderBySeriesCodeAsc(UUID projectId);
 
     @Lock(LockModeType.PESSIMISTIC_WRITE)
-    @Query("select s from DocumentNumberSeries s where s.projectId = :projectId and s.documentType = :documentType")
+    @Query("select s from DocumentNumberSeries s where s.projectId = :projectId and s.seriesCode = :seriesCode")
     Optional<DocumentNumberSeries> lockForUpdate(@Param("projectId") UUID projectId,
-                                                 @Param("documentType") String documentType);
+                                                 @Param("seriesCode") String seriesCode);
 }

@@ -18,7 +18,6 @@ public class DocumentService {
 
     private final DocumentRepository documentRepository;
     private final DocumentRevisionRepository revisionRepository;
-    private final DocumentLinkRepository linkRepository;
     private final DocumentNumberService numberService;
     private final ProjectService projectService;
     private final ScopeService scopeService;
@@ -27,14 +26,12 @@ public class DocumentService {
     public DocumentService(
             DocumentRepository documentRepository,
             DocumentRevisionRepository revisionRepository,
-            DocumentLinkRepository linkRepository,
             DocumentNumberService numberService,
             ProjectService projectService,
             ScopeService scopeService,
             OrganizationService organizationService) {
         this.documentRepository = documentRepository;
         this.revisionRepository = revisionRepository;
-        this.linkRepository = linkRepository;
         this.numberService = numberService;
         this.projectService = projectService;
         this.scopeService = scopeService;
@@ -47,14 +44,12 @@ public class DocumentService {
             UUID primaryScopeId,
             UUID originatorOrganizationId,
             String requestedDocumentNumber,
+            String numberSeriesCode,
             String documentType,
             String title,
             String description,
-            String discipline,
-            String packageCode,
-            String locationCode,
-            String issuePurpose,
-            String classificationCode) {
+            String classificationCode,
+            String metadataJson) {
         projectService.requireExists(projectId);
         if (primaryScopeId != null) {
             scopeService.requireExistsInProject(projectId, primaryScopeId);
@@ -67,11 +62,14 @@ public class DocumentService {
         String normalizedTitle = requireText(title, "title");
 
         DocumentNumberSource numberSource;
+        String normalizedSeriesCode;
         String documentNumber;
         if (requestedDocumentNumber == null || requestedDocumentNumber.isBlank()) {
-            documentNumber = numberService.nextReference(projectId, normalizedType);
+            normalizedSeriesCode = normalizeCode(numberSeriesCode, "numberSeriesCode");
+            documentNumber = numberService.nextReference(projectId, normalizedSeriesCode, normalizedType);
             numberSource = DocumentNumberSource.GENERATED;
         } else {
+            normalizedSeriesCode = null;
             documentNumber = normalizeDocumentNumber(requestedDocumentNumber);
             numberSource = DocumentNumberSource.EXTERNAL;
         }
@@ -87,14 +85,12 @@ public class DocumentService {
                 originatorOrganizationId,
                 documentNumber,
                 numberSource,
+                normalizedSeriesCode,
                 normalizedType,
                 normalizedTitle,
                 normalizeOptional(description),
-                normalizeOptionalUpper(discipline),
-                normalizeOptionalUpper(packageCode),
-                normalizeOptionalUpper(locationCode),
-                normalizeOptionalUpper(issuePurpose),
-                normalizeOptionalUpper(classificationCode));
+                normalizeOptionalUpper(classificationCode),
+                normalizeJson(metadataJson));
 
         return toView(documentRepository.save(document));
     }
@@ -164,43 +160,6 @@ public class DocumentService {
                 .toList();
     }
 
-    @Transactional
-    public LinkView addLink(
-            UUID documentId,
-            UUID revisionId,
-            String relationshipType,
-            String targetType,
-            UUID targetId,
-            String targetReference) {
-        Document document = requireDocument(documentId);
-        if (revisionId != null) {
-            revisionRepository.findByIdAndDocumentId(revisionId, documentId)
-                    .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
-                            "Revision does not belong to document: " + revisionId));
-        }
-        if (targetId == null) {
-            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "targetId is required");
-        }
-
-        DocumentLink link = linkRepository.save(DocumentLink.create(
-                document.getProjectId(),
-                documentId,
-                revisionId,
-                normalizeCode(relationshipType, "relationshipType"),
-                normalizeCode(targetType, "targetType"),
-                targetId,
-                normalizeOptional(targetReference)));
-        return toLinkView(link);
-    }
-
-    @Transactional(readOnly = true)
-    public List<LinkView> listLinks(UUID documentId) {
-        requireDocument(documentId);
-        return linkRepository.findByDocumentIdOrderByCreatedAtAsc(documentId).stream()
-                .map(DocumentService::toLinkView)
-                .toList();
-    }
-
     private Document requireDocument(UUID id) {
         return documentRepository.findById(id)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Document not found: " + id));
@@ -230,6 +189,10 @@ public class DocumentService {
         return normalized == null ? null : normalized.toUpperCase(Locale.ROOT);
     }
 
+    private static String normalizeJson(String value) {
+        return value == null || value.isBlank() ? "{}" : value.trim();
+    }
+
     private static String normalizeSha256(String value) {
         String normalized = normalizeOptional(value);
         if (normalized == null) {
@@ -249,14 +212,12 @@ public class DocumentService {
                 document.getOriginatorOrganizationId(),
                 document.getDocumentNumber(),
                 document.getNumberSource().name(),
+                document.getNumberSeriesCode(),
                 document.getDocumentType(),
                 document.getTitle(),
                 document.getDescription(),
-                document.getDiscipline(),
-                document.getPackageCode(),
-                document.getLocationCode(),
-                document.getIssuePurpose(),
                 document.getClassificationCode(),
+                document.getMetadataJson(),
                 document.getStatus().name(),
                 document.getCurrentRevisionSequence(),
                 document.getCurrentRevisionCode(),
@@ -281,19 +242,6 @@ public class DocumentService {
                 revision.getCreatedAt());
     }
 
-    private static LinkView toLinkView(DocumentLink link) {
-        return new LinkView(
-                link.getId(),
-                link.getProjectId(),
-                link.getDocumentId(),
-                link.getRevisionId(),
-                link.getRelationshipType(),
-                link.getTargetType(),
-                link.getTargetId(),
-                link.getTargetReference(),
-                link.getCreatedAt());
-    }
-
     public record DocumentView(
             UUID id,
             UUID projectId,
@@ -301,14 +249,12 @@ public class DocumentService {
             UUID originatorOrganizationId,
             String documentNumber,
             String numberSource,
+            String numberSeriesCode,
             String documentType,
             String title,
             String description,
-            String discipline,
-            String packageCode,
-            String locationCode,
-            String issuePurpose,
             String classificationCode,
+            String metadataJson,
             String status,
             int currentRevisionSequence,
             String currentRevisionCode,
@@ -329,18 +275,6 @@ public class DocumentService {
             String originalFilename,
             String mediaType,
             Long sizeBytes,
-            Instant createdAt) {
-    }
-
-    public record LinkView(
-            UUID id,
-            UUID projectId,
-            UUID documentId,
-            UUID revisionId,
-            String relationshipType,
-            String targetType,
-            UUID targetId,
-            String targetReference,
             Instant createdAt) {
     }
 }

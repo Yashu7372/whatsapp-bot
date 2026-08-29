@@ -23,10 +23,12 @@ public class DocumentNumberService {
     }
 
     @Transactional
-    public SeriesView defineSeries(UUID projectId, String documentType, String prefix, Integer padding, String separator) {
+    public SeriesView defineSeries(UUID projectId, String seriesCode, String documentType,
+                                   String prefix, Integer padding, String separator) {
         projectService.requireExists(projectId);
+        String code = normalizeCode(seriesCode, "seriesCode");
         String type = normalizeCode(documentType, "documentType");
-        String normalizedPrefix = normalizeCode(prefix == null || prefix.isBlank() ? type : prefix, "prefix");
+        String normalizedPrefix = normalizeCode(prefix == null || prefix.isBlank() ? code : prefix, "prefix");
         int normalizedPadding = padding == null ? 4 : padding;
         if (normalizedPadding < 1 || normalizedPadding > 12) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "padding must be between 1 and 12");
@@ -36,30 +38,36 @@ public class DocumentNumberService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "separator must contain 1 to 5 characters");
         }
 
-        DocumentNumberSeries series = repository.findByProjectIdAndDocumentType(projectId, type)
+        DocumentNumberSeries series = repository.findByProjectIdAndSeriesCode(projectId, code)
                 .map(existing -> {
-                    existing.configure(normalizedPrefix, normalizedSeparator, normalizedPadding);
+                    existing.configure(type, normalizedPrefix, normalizedSeparator, normalizedPadding);
                     return existing;
                 })
                 .orElseGet(() -> DocumentNumberSeries.create(
-                        projectId, type, normalizedPrefix, normalizedSeparator, normalizedPadding));
+                        projectId, code, type, normalizedPrefix, normalizedSeparator, normalizedPadding));
         return toView(repository.save(series));
     }
 
     @Transactional(readOnly = true)
     public List<SeriesView> listSeries(UUID projectId) {
         projectService.requireExists(projectId);
-        return repository.findByProjectIdOrderByDocumentTypeAsc(projectId).stream()
+        return repository.findByProjectIdOrderBySeriesCodeAsc(projectId).stream()
                 .map(DocumentNumberService::toView)
                 .toList();
     }
 
     @Transactional(propagation = Propagation.REQUIRES_NEW)
-    public String nextReference(UUID projectId, String documentType) {
+    public String nextReference(UUID projectId, String seriesCode, String documentType) {
+        String code = normalizeCode(seriesCode, "numberSeriesCode");
         String type = normalizeCode(documentType, "documentType");
-        DocumentNumberSeries series = repository.lockForUpdate(projectId, type)
+        DocumentNumberSeries series = repository.lockForUpdate(projectId, code)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.BAD_REQUEST,
-                        "No document numbering series defined for type '" + type + "' in project " + projectId));
+                        "No document numbering series '" + code + "' defined in project " + projectId));
+        if (!series.getDocumentType().equals(type)) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Numbering series '" + code + "' is configured for document type '"
+                            + series.getDocumentType() + "', not '" + type + "'");
+        }
         int number = series.takeNextNumber();
         repository.save(series);
         return series.getPrefix() + series.getSeparator()
@@ -74,11 +82,12 @@ public class DocumentNumberService {
     }
 
     private static SeriesView toView(DocumentNumberSeries series) {
-        return new SeriesView(series.getId(), series.getProjectId(), series.getDocumentType(),
-                series.getPrefix(), series.getSeparator(), series.getNextNumber(), series.getPadding());
+        return new SeriesView(series.getId(), series.getProjectId(), series.getSeriesCode(),
+                series.getDocumentType(), series.getPrefix(), series.getSeparator(),
+                series.getNextNumber(), series.getPadding());
     }
 
-    public record SeriesView(UUID id, UUID projectId, String documentType, String prefix,
-                             String separator, int nextNumber, int padding) {
+    public record SeriesView(UUID id, UUID projectId, String seriesCode, String documentType,
+                             String prefix, String separator, int nextNumber, int padding) {
     }
 }
