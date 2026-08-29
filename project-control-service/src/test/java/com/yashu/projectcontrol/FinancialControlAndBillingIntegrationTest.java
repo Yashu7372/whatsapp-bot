@@ -90,7 +90,6 @@ class FinancialControlAndBillingIntegrationTest {
         identityService.addOrganizationMembership(
                 clientUser.id(), client.id(), "COMMERCIAL_MANAGER", null, null);
 
-        // ---- Separate Project Scope and Cost Breakdown Structure ----
         var internalCbs = costService.createStructure(
                 contractorUser.id(), project.id(), contractor.id(), null,
                 "GB-COST", "GulfBuild Internal Cost", "INTERNAL_COST");
@@ -107,7 +106,6 @@ class FinancialControlAndBillingIntegrationTest {
         assertEquals(chw.id(), scopeLink.scopeId());
         assertEquals(chwCost.id(), scopeLink.costNodeId());
 
-        // ---- Versioned budget + deterministic exposure ----
         var budget = costService.createBudgetVersion(
                 contractorUser.id(), project.id(), internalCbs.id(), "ORIGINAL", "AED");
         costService.addBudgetLine(
@@ -151,11 +149,9 @@ class FinancialControlAndBillingIntegrationTest {
                 new BigDecimal("50000"), "PROCUREMENT:CHW-PUMPS");
         assertEquals("BLOCK", block.decision());
 
-        // Client project participation does not disclose contractor-private cost/margin.
         assertThrows(ResponseStatusException.class,
                 () -> costService.summary(clientUser.id(), project.id(), chwCost.id()));
 
-        // ---- Controlled evidence + external commercial chain ----
         var evidenceDocument = documentService.create(
                 project.id(), chw.id(), contractor.id(), "GB-CHW-MILESTONE-001", null,
                 "MILESTONE_EVIDENCE", "CHW milestone completion evidence", null,
@@ -204,8 +200,6 @@ class FinancialControlAndBillingIntegrationTest {
         money("100000", commercialSummary.paidToDate());
         money("18000", commercialSummary.outstandingCertified());
 
-        // Non-quantity milestone valuation remains directly traceable to its controlled document revision.
-        // Verification/measurement IDs are intentionally null because those dimensions do not apply to this valuation method.
         var trace = commercialService.paymentTrace(clientUser.id(), project.id(), payment.id());
         assertEquals("IPC-001", trace.paymentApplication().applicationNumber());
         assertEquals(1, trace.lines().size());
@@ -214,7 +208,6 @@ class FinancialControlAndBillingIntegrationTest {
         assertNull(trace.lines().getFirst().measurementId());
         assertEquals("DIRECT_CONTROLLED_DOCUMENT_REVISION", trace.lines().getFirst().verificationMappingStatus());
 
-        // Quantity-rate billing still fails closed when no accepted Measurement is supplied.
         var quantityItem = commercialService.createContractItem(
                 admin.id(), project.id(), contract.id(), chw.id(), "CHW-QTY",
                 "Measured CHW quantity", "QUANTITY_RATE", "m",
@@ -224,7 +217,6 @@ class FinancialControlAndBillingIntegrationTest {
                 "DOCUMENT_REVISION", "Not enough to prove accepted quantity", evidenceRevision.id(),
                 new BigDecimal("120000"), BigDecimal.ZERO, BigDecimal.ZERO));
 
-        // ---- Project drill-down: same truth, different dimensions, no cross-tier addition ----
         var drilldown = financialReadService.drilldown(contractorUser.id(), project.id(), contractor.id());
         assertEquals("ORGANIZATION_INTERNAL_COST", drilldown.perspective());
         assertEquals(1, drilldown.costStructures().size());
@@ -234,9 +226,8 @@ class FinancialControlAndBillingIntegrationTest {
                 .filter(node -> node.node().id().equals(chwCost.id()))
                 .findFirst().orElseThrow().financialSummary().actual());
         money("120000", drilldown.contracts().getFirst().commercialSummary().originalValue());
-        assertTrue(drilldown.aggregationRule().contains("not added"));
+        assertTrue(drilldown.aggregationRule().contains("never added"));
 
-        // ---- Cash flow is a derived view, not another ledger ----
         var contractorCash = financialReadService.cashFlow(
                 contractorUser.id(), project.id(), contractor.id(),
                 LocalDate.of(2026, 9, 1), LocalDate.of(2026, 10, 31));
