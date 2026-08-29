@@ -204,17 +204,17 @@ class FinancialControlAndBillingIntegrationTest {
         money("100000", commercialSummary.paidToDate());
         money("18000", commercialSummary.outstandingCertified());
 
-        // Reverse trace reaches the controlled revision today, and explicitly reserves typed
-        // VerificationPackage/Measurement IDs for their frozen later foundations.
+        // Non-quantity milestone valuation remains directly traceable to its controlled document revision.
+        // Verification/measurement IDs are intentionally null because those dimensions do not apply to this valuation method.
         var trace = commercialService.paymentTrace(clientUser.id(), project.id(), payment.id());
         assertEquals("IPC-001", trace.paymentApplication().applicationNumber());
         assertEquals(1, trace.lines().size());
         assertEquals(evidenceRevision.id(), trace.lines().getFirst().controlledEvidence().revisionId());
         assertNull(trace.lines().getFirst().verificationPackageId());
         assertNull(trace.lines().getFirst().measurementId());
-        assertTrue(trace.lines().getFirst().verificationMappingStatus().contains("typed FKs"));
+        assertEquals("DIRECT_CONTROLLED_DOCUMENT_REVISION", trace.lines().getFirst().verificationMappingStatus());
 
-        // Quantity-rate billing intentionally fails closed until accepted Measurement truth exists.
+        // Quantity-rate billing still fails closed when no accepted Measurement is supplied.
         var quantityItem = commercialService.createContractItem(
                 admin.id(), project.id(), contract.id(), chw.id(), "CHW-QTY",
                 "Measured CHW quantity", "QUANTITY_RATE", "m",
