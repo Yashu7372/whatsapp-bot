@@ -254,6 +254,8 @@ class VerificationMeasurementCommercialTraceIntegrationTest {
                 clientVerifier.id(), project.id(), ipc.id(), "PAY-CHW-001", new BigDecimal("100000"),
                 Instant.parse("2026-10-20T10:00:00Z"), null);
 
+        var firstPackageId = first.id();
+        var followUpPackageId = followUp.id();
         var trace = commercialService.paymentTrace(clientVerifier.id(), project.id(), payment.id());
         assertEquals("IPC-CHW-001", trace.paymentApplication().applicationNumber());
         assertEquals(2, trace.lines().size());
@@ -266,14 +268,14 @@ class VerificationMeasurementCommercialTraceIntegrationTest {
                 !line.verificationTrace().evidence().isEmpty()
                         && !line.verificationTrace().decisions().isEmpty()));
         assertTrue(trace.lines().stream().anyMatch(line ->
-                line.verificationPackageId().equals(first.id())
+                line.verificationPackageId().equals(firstPackageId)
                         && line.verificationTrace().decisions().stream().anyMatch(decision ->
                         decision.actorUserId().equals(clientVerifier.id())
                                 && decision.actorOrganizationId().equals(client.id())
                                 && "PARTIALLY_ACCEPTED".equals(decision.decision()))));
         assertTrue(trace.lines().stream().anyMatch(line ->
-                line.verificationPackageId().equals(followUp.id())
-                        && line.verificationTrace().verificationPackage().parentPackageId().equals(first.id())));
+                line.verificationPackageId().equals(followUpPackageId)
+                        && line.verificationTrace().verificationPackage().parentPackageId().equals(firstPackageId)));
     }
 
     private static void money(String expected, BigDecimal actual) {
