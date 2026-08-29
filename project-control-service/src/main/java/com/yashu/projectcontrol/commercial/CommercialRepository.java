@@ -4,8 +4,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -41,7 +43,7 @@ class CommercialRepository {
             String visibilityPolicy) {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
-        jdbc.update("""
+        update("""
                 insert into contracts(
                     id,project_id,payer_participant_id,payee_participant_id,contract_number,contract_type,
                     currency,original_value,visibility_policy,status,version,created_at,updated_at)
@@ -92,7 +94,7 @@ class CommercialRepository {
             BigDecimal contractValue,
             LocalDate dueDate) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into contract_items(
                     id,contract_id,scope_id,item_code,description,valuation_method,unit,planned_quantity,rate,
                     contract_value,due_date,status,version,created_at)
@@ -144,7 +146,7 @@ class CommercialRepository {
             BigDecimal eligibleValue,
             UUID createdBy) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into valuation_lines(
                     id,project_id,contract_id,scope_id,contract_item_id,valuation_number,source_type,source_reference,
                     source_document_revision_id,unit,accepted_quantity,rate,gross_value,prior_value,current_value,
@@ -198,7 +200,7 @@ class CommercialRepository {
             UUID createdBy) {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
-        jdbc.update("""
+        update("""
                 insert into payment_applications(
                     id,project_id,contract_id,application_number,period_from,period_to,due_date,claimed_amount,
                     certified_amount,status,source_document_revision_id,version,created_by_user_id,created_at,updated_at)
@@ -226,7 +228,7 @@ class CommercialRepository {
             UUID valuationId,
             BigDecimal claimedValue) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into payment_application_lines(id,payment_application_id,valuation_line_id,claimed_value)
                 values(?,?,?,?)
                 """, id, applicationId, valuationId, claimedValue);
@@ -245,7 +247,7 @@ class CommercialRepository {
     }
 
     void recalculateClaimed(UUID applicationId) {
-        jdbc.update("""
+        update("""
                 update payment_applications
                 set claimed_amount=(select coalesce(sum(claimed_value),0) from payment_application_lines where payment_application_id=?),
                     updated_at=?
@@ -255,7 +257,7 @@ class CommercialRepository {
 
     int submitApplication(UUID applicationId, long expectedVersion, UUID actor) {
         Instant now = Instant.now();
-        return jdbc.update("""
+        return update("""
                 update payment_applications
                 set status='SUBMITTED',submitted_by_user_id=?,submitted_at=?,version=version+1,updated_at=?
                 where id=? and status='DRAFT' and version=?
@@ -264,7 +266,7 @@ class CommercialRepository {
 
     int certifyApplication(UUID applicationId, long expectedVersion, UUID actor) {
         Instant now = Instant.now();
-        return jdbc.update("""
+        return update("""
                 update payment_applications
                 set status='CERTIFIED',
                     certified_amount=(select coalesce(sum(certified_value),0) from payment_application_lines where payment_application_id=?),
@@ -274,7 +276,7 @@ class CommercialRepository {
     }
 
     int setLineCertification(UUID applicationId, UUID valuationId, BigDecimal certifiedValue, String reason) {
-        return jdbc.update("""
+        return update("""
                 update payment_application_lines
                 set certified_value=?,certification_reason=?
                 where payment_application_id=? and valuation_line_id=? and certified_value is null
@@ -298,7 +300,7 @@ class CommercialRepository {
             UUID sourceRevisionId,
             UUID actor) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into payments(
                     id,project_id,contract_id,payment_application_id,payment_reference,amount,currency,paid_at,
                     payer_organization_id,payee_organization_id,status,source_document_revision_id,version,
@@ -360,6 +362,13 @@ class CommercialRepository {
                     rs.getBigDecimal("valued_to_date"), rs.getBigDecimal("claimed_to_date"), certified, paid,
                     rs.getBigDecimal("retention_to_date"), certified.subtract(paid));
         }, contractId).stream().findFirst().orElse(null);
+    }
+
+    private int update(String sql, Object... args) {
+        Object[] normalized = Arrays.stream(args)
+                .map(arg -> arg instanceof Instant instant ? Timestamp.from(instant) : arg)
+                .toArray();
+        return jdbc.update(sql, normalized);
     }
 
     private BigDecimal amount(String sql, Object... args) {
