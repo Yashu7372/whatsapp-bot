@@ -71,6 +71,52 @@ Categories combine with AND semantics; multiple values in one category use OR se
 
 The integration proof verifies that Site Team cannot execute QCE, Consultant Inspector cannot execute RE final approval, and a scope-only Viewer can see MEP resources without gaining Civil scope visibility.
 
+### Foundation 07 — Financial control, billing and derived cash flow
+
+The financial foundation preserves the frozen separation between project context, cost control and commercial value.
+
+`Project Scope != Cost Breakdown Structure (CBS)`
+
+Project Scope remains the operational drill-down tree. CBS is an independent hierarchical financial structure. `cost_node_scope_links` provides the deliberate typed mapping between the two so one cost node can support one or more project scopes without turning either model into the other.
+
+Organization-private internal cost is independent from external contract/commercial truth:
+
+`CBS -> Budget Version -> Budget Lines`
+
+`CBS Node -> Commitment -> Actual Cost + Remaining Forecast`
+
+`Budget Exposure = Actual + Open Commitment`
+
+`Open Commitment = Commitment - posted actual already recognized against that commitment`
+
+The first slice intentionally does not create accrual/reservation ledgers until a concrete business use case requires them. Budget control decisions are append-only and the authoritative commitment command executes the budget gate inside the same transaction.
+
+Commercial billing remains a separate chain:
+
+`Contract -> Contract Item -> Valuation -> Payment Application / IPC -> Certification -> Payment`
+
+Milestone, lump-sum, percentage, time-based and other non-quantity valuations can use a controlled `DocumentRevision` as supporting evidence. Quantity-rate valuation fails closed until the typed Verification Package + Measurement foundation exists; accepted quantity is not accepted as free-form billing input.
+
+Payment reverse trace currently reaches:
+
+`Payment -> Payment Application -> Valuation -> Contract Item -> controlled Document Revision`
+
+The trace explicitly reserves `VerificationPackage` and `Measurement` positions without inventing weak target-type/target-id links. When those frozen domains are implemented, their typed foreign keys will complete the chain:
+
+`Evidence -> Verification Package -> Accepted Measurement -> Valuation -> IPC -> Payment`
+
+The project financial drill-down is a read-model composition rather than another ledger:
+
+`Project -> Scope -> direct cost facts`
+
+`Project -> CBS -> Cost Node -> linked Scopes -> budget/exposure`
+
+`Project -> Contract -> Valuation -> IPC -> Payment`
+
+Contract values are never added to organization-private internal cost totals. The caller must choose an explicit organization perspective.
+
+Cash flow is also derived, not authoritative storage. Monthly views expose posted internal cost, remaining forecast, certified receivable/payable and actual payment cash in/out separately. Posted accounting cost is not treated as cash movement.
+
 ## Local authentication
 
 Run with the `local` profile. The service bootstraps local credential accounts. All use password:
