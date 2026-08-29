@@ -15,6 +15,24 @@ on:
 jobs:
   verify:
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: project_control_test
+          POSTGRES_USER: project_control
+          POSTGRES_PASSWORD: project_control
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U project_control -d project_control_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DB_URL: jdbc:postgresql://localhost:5432/project_control_test
+      TEST_DB_USERNAME: project_control
+      TEST_DB_PASSWORD: project_control
     defaults:
       run:
         working-directory: project-control-service
