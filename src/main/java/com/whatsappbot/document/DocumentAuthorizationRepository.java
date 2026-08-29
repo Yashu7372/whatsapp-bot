@@ -118,7 +118,7 @@ class DocumentAuthorizationRepository {
                 select d.id
                   from documents d
                  where d.tenant_id=:tenantId
-                   and (:docType is null or d.doc_type=:docType)
+                   and (cast(:docType as text) is null or d.doc_type=:docType)
                    and (
                         d.project_id is null
                         or :tenantManager
