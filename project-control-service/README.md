@@ -146,6 +146,8 @@ The completed typed reverse trace is:
 
 Non-quantity valuation remains valid without inventing measurement: milestone/lump-sum/percentage/time-based valuation can trace directly to its controlled supporting `DocumentRevision`.
 
+Verification evidence used in this cross-organization provenance path currently fails closed to `PROJECT_SHARED` or `PUBLIC_WITHIN_PROJECT`. Organization-private, participant-restricted, or contract-specific verification evidence is not silently widened through package/payment trace APIs; those narrower classifications require a future typed audience/contract relation before they can be attached here safely.
+
 The canonical integration proof demonstrates the frozen CHW scenario:
 
 `320 m submitted -> 300 m accepted + 20 m rework -> child verification accepts 20 m -> 320 m accepted in two immutable measurements -> AED 400/m valuation -> IPC -> certification -> payment -> reverse provenance trace`
