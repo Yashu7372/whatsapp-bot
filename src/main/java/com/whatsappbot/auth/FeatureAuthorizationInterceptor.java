@@ -16,6 +16,7 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.HandlerInterceptor;
 
 import jakarta.annotation.PostConstruct;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
@@ -45,9 +46,13 @@ public class FeatureAuthorizationInterceptor implements HandlerInterceptor {
 
     @PostConstruct
     void init() {
+        // A narrow API rule must win over a broad module prefix. This lets a single action such as
+        // "decide the approval currently assigned to me" have its own permission without granting
+        // the reviewer MANAGE rights over every /api/v1/documents endpoint.
         compiledPatterns = featureApiPathRepository.findAll().stream()
+                .sorted(Comparator.comparingInt((FeatureApiPathEntity p) -> p.getPathPattern().length()).reversed())
                 .map(p -> Map.entry(Pattern.compile(p.getPathPattern()), p.getFeatureCode()))
-                .collect(Collectors.toList());
+                .toList();
         catalogByCode = featureCatalogRepository.findAll().stream()
                 .collect(Collectors.toMap(FeatureCatalogEntity::getFeatureCode, c -> c));
     }
