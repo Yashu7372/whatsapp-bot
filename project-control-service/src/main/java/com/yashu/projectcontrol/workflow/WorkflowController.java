@@ -149,7 +149,9 @@ public class WorkflowController {
             @PathVariable UUID instanceId,
             @AuthenticationPrincipal ProjectControlPrincipal principal) {
         var instance = service.getInstance(instanceId);
-        accessService.require(principal.userId(), SCOPE_VIEW, instance.projectId(), instance.scopeId());
+        String assignmentJson = instance.currentStep() == null ? "{}" : instance.currentStep().assignmentJson();
+        accessService.requireWorkflowStepView(
+                principal.userId(), instance.projectId(), instance.scopeId(), assignmentJson);
         return instance;
     }
 
@@ -158,7 +160,9 @@ public class WorkflowController {
             @PathVariable UUID instanceId,
             @AuthenticationPrincipal ProjectControlPrincipal principal) {
         var instance = service.getInstance(instanceId);
-        accessService.require(principal.userId(), SCOPE_VIEW, instance.projectId(), instance.scopeId());
+        String assignmentJson = instance.currentStep() == null ? "{}" : instance.currentStep().assignmentJson();
+        accessService.requireWorkflowStepView(
+                principal.userId(), instance.projectId(), instance.scopeId(), assignmentJson);
         return service.history(instanceId);
     }
 
