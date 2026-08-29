@@ -27,8 +27,8 @@ class QuantityValuationRepository {
     UUID measurementId(UUID valuationId) {
         return jdbc.query(
                 "select measurement_id from valuation_lines where id=?",
-                (rs, n) -> rs.getObject("measurement_id", UUID.class), valuationId)
-                .stream().findFirst().orElse(null);
+                rs -> rs.next() ? rs.getObject("measurement_id", UUID.class) : null,
+                valuationId);
     }
 
     BigDecimal acceptedQuantityAlreadyValued(UUID contractItemId) {
