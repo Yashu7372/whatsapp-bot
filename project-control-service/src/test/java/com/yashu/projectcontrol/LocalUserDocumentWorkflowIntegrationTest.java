@@ -134,8 +134,9 @@ class LocalUserDocumentWorkflowIntegrationTest {
         instance = executionService.act(site.id(), instance.id(), "COMPLETE_STEP", "SUBMIT", null,
                 "Raised by site team", "{}");
         assertEquals("QCE_VERIFY", instance.currentStep().stepCode());
+        var qceStepInstanceId = instance.id();
         assertThrows(ResponseStatusException.class, () -> executionService.act(
-                site.id(), instance.id(), "COMPLETE_STEP", "VERIFY", null, "Wrong actor", "{}"));
+                site.id(), qceStepInstanceId, "COMPLETE_STEP", "VERIFY", null, "Wrong actor", "{}"));
 
         instance = executionService.act(qce.id(), instance.id(), "COMPLETE_STEP", "VERIFY", null,
                 "QCE verified", "{}");
@@ -149,8 +150,9 @@ class LocalUserDocumentWorkflowIntegrationTest {
         instance = executionService.act(inspector.id(), instance.id(), "COMPLETE_STEP", "REVIEW", null,
                 "Forwarded to RE", "{}");
         assertEquals("RE_FINAL_APPROVAL", instance.currentStep().stepCode());
+        var reStepInstanceId = instance.id();
         assertThrows(ResponseStatusException.class, () -> executionService.act(
-                inspector.id(), instance.id(), "COMPLETE_STEP", "APPROVE", null, "Wrong actor", "{}"));
+                inspector.id(), reStepInstanceId, "COMPLETE_STEP", "APPROVE", null, "Wrong actor", "{}"));
         instance = executionService.act(re.id(), instance.id(), "COMPLETE_STEP", "APPROVE", null,
                 "Final approval", "{}");
         assertEquals("COMPLETED", instance.status());
