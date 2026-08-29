@@ -12,9 +12,8 @@ import java.util.UUID;
 
 /**
  * Central business authorization choke point for Project Control.
- *
- * <p>This service deliberately evaluates relationship context instead of treating
- * one generic user role as permission to every project/company resource.</p>
+ * Authentication proves who the caller is; this service decides what that actor
+ * may do inside a concrete project/scope relationship context.
  */
 @Service
 public class ProjectAccessService {
@@ -72,31 +71,7 @@ public class ProjectAccessService {
 
     @Transactional(readOnly = true)
     public AccessDecision decide(UUID userId, AccessAction action, UUID projectId, UUID scopeId) {
-        ActorContext actor = resolveActor(userId, projectId, scopeId);
-        boolean workspaceAdmin = actor.workspaceRoles().contains("PROJECT_ADMIN");
-        boolean workspaceViewer = workspaceAdmin || actor.workspaceRoles().contains("PROJECT_VIEWER");
-        boolean projectParticipant = !actor.projectParticipations().isEmpty();
-        boolean directScopeAssignment = !actor.scopeAssignments().isEmpty();
-        boolean scopeRelationship = directScopeAssignment || actor.organizationAssignedToScope();
-        boolean canContribute = actor.scopeAssignments().stream()
-                .anyMatch(a -> a.accessLevel().equals("CONTRIBUTE")
-                        || a.accessLevel().equals("MANAGE")
-                        || a.accessLevel().equals("APPROVE"));
-        boolean canManageScope = actor.scopeAssignments().stream()
-                .anyMatch(a -> a.accessLevel().equals("MANAGE") || a.accessLevel().equals("APPROVE"));
-
-        return switch (action) {
-            case PROJECT_VIEW -> allowed(workspaceViewer || projectParticipant,
-                    "Project visibility requires workspace membership or organization participation");
-            case PROJECT_MANAGE -> allowed(workspaceAdmin,
-                    "Project configuration requires PROJECT_ADMIN workspace membership");
-            case SCOPE_VIEW -> allowed(workspaceViewer || scopeRelationship,
-                    "Scope visibility requires workspace access or a scope relationship");
-            case SCOPE_MANAGE -> allowed(workspaceAdmin || canManageScope,
-                    "Scope management requires PROJECT_ADMIN or a MANAGE/APPROVE scope assignment");
-            case WORKFLOW_ACT -> allowed(workspaceAdmin || canContribute,
-                    "Workflow action requires PROJECT_ADMIN or an actionable scope assignment");
-        };
+        return decideFromContext(resolveActor(userId, projectId, scopeId), action);
     }
 
     @Transactional(readOnly = true)
@@ -120,18 +95,27 @@ public class ProjectAccessService {
                         || a.accessLevel().equals("APPROVE"));
         boolean canManageScope = actor.scopeAssignments().stream()
                 .anyMatch(a -> a.accessLevel().equals("MANAGE") || a.accessLevel().equals("APPROVE"));
+        boolean resourceVisible = actor.scopeId() == null
+                ? workspaceViewer || projectParticipant
+                : workspaceViewer || scopeRelationship;
 
         return switch (action) {
             case PROJECT_VIEW -> allowed(workspaceViewer || projectParticipant,
                     "Project visibility requires workspace membership or organization participation");
             case PROJECT_MANAGE -> allowed(workspaceAdmin,
                     "Project configuration requires PROJECT_ADMIN workspace membership");
-            case SCOPE_VIEW -> allowed(workspaceViewer || scopeRelationship,
+            case SCOPE_VIEW -> allowed(resourceVisible,
                     "Scope visibility requires workspace access or a scope relationship");
             case SCOPE_MANAGE -> allowed(workspaceAdmin || canManageScope,
                     "Scope management requires PROJECT_ADMIN or a MANAGE/APPROVE scope assignment");
-            case WORKFLOW_ACT -> allowed(workspaceAdmin || canContribute,
-                    "Workflow action requires PROJECT_ADMIN or an actionable scope assignment");
+            case DOCUMENT_VIEW, DOCUMENT_CONTENT_VIEW -> allowed(resourceVisible,
+                    "Document visibility requires project/scope visibility");
+            case DOCUMENT_SUBMIT -> allowed(workspaceAdmin || canContribute,
+                    "Document submission requires PROJECT_ADMIN or a CONTRIBUTOR/MANAGE/APPROVE scope assignment");
+            case WORKFLOW_CONFIGURE -> allowed(workspaceAdmin || canManageScope,
+                    "Workflow configuration requires PROJECT_ADMIN or a MANAGE/APPROVE scope assignment");
+            case WORKFLOW_START, WORKFLOW_ACT -> allowed(workspaceAdmin || canContribute,
+                    "Workflow execution requires PROJECT_ADMIN or an actionable scope assignment");
         };
     }
 
@@ -146,6 +130,11 @@ public class ProjectAccessService {
         PROJECT_MANAGE,
         SCOPE_VIEW,
         SCOPE_MANAGE,
+        DOCUMENT_VIEW,
+        DOCUMENT_SUBMIT,
+        DOCUMENT_CONTENT_VIEW,
+        WORKFLOW_CONFIGURE,
+        WORKFLOW_START,
         WORKFLOW_ACT
     }
 
