@@ -1,5 +1,7 @@
 package com.yashu.projectcontrol.workflow;
 
+import com.yashu.projectcontrol.access.AccessController;
+import com.yashu.projectcontrol.access.ProjectAccessService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
@@ -11,39 +13,56 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
 
 import java.util.List;
 import java.util.UUID;
+
+import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.PROJECT_MANAGE;
+import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.PROJECT_VIEW;
+import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.SCOPE_VIEW;
+import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_ACT;
+import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_CONFIGURE;
+import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_START;
 
 @RestController
 @RequestMapping("/api/v1")
 public class WorkflowController {
 
     private final WorkflowService service;
+    private final WorkflowDefinitionRepository definitionRepository;
+    private final ProjectAccessService accessService;
 
-    public WorkflowController(WorkflowService service) {
+    public WorkflowController(
+            WorkflowService service,
+            WorkflowDefinitionRepository definitionRepository,
+            ProjectAccessService accessService) {
         this.service = service;
+        this.definitionRepository = definitionRepository;
+        this.accessService = accessService;
     }
 
     @PostMapping("/projects/{projectId}/workflow-definitions")
     @ResponseStatus(HttpStatus.CREATED)
     public WorkflowService.DefinitionView createDefinition(
             @PathVariable UUID projectId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
             @Valid @RequestBody CreateDefinitionRequest request) {
+        accessService.require(userId, PROJECT_MANAGE, projectId, null);
         return service.createDefinition(
-                projectId,
-                request.code(),
-                request.version(),
-                request.name(),
-                request.purposeCode(),
-                request.requiredCapabilityCode());
+                projectId, request.code(), request.version(), request.name(),
+                request.purposeCode(), request.requiredCapabilityCode());
     }
 
     @GetMapping("/projects/{projectId}/workflow-definitions")
-    public List<WorkflowService.DefinitionView> listDefinitions(@PathVariable UUID projectId) {
+    public List<WorkflowService.DefinitionView> listDefinitions(
+            @PathVariable UUID projectId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+        accessService.require(userId, PROJECT_VIEW, projectId, null);
         return service.listDefinitions(projectId);
     }
 
@@ -51,24 +70,30 @@ public class WorkflowController {
     @ResponseStatus(HttpStatus.CREATED)
     public WorkflowService.StepDefinitionView addStep(
             @PathVariable UUID definitionId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
             @Valid @RequestBody AddStepRequest request) {
+        UUID projectId = definitionProject(definitionId);
+        accessService.require(userId, PROJECT_MANAGE, projectId, null);
         return service.addStep(
-                definitionId,
-                request.sequence(),
-                request.stepCode(),
-                request.name(),
-                request.completionActionCode(),
-                request.assignmentJson(),
-                request.configurationJson());
+                definitionId, request.sequence(), request.stepCode(), request.name(),
+                request.completionActionCode(), request.assignmentJson(), request.configurationJson());
     }
 
     @GetMapping("/workflow-definitions/{definitionId}/steps")
-    public List<WorkflowService.StepDefinitionView> listSteps(@PathVariable UUID definitionId) {
+    public List<WorkflowService.StepDefinitionView> listSteps(
+            @PathVariable UUID definitionId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+        UUID projectId = definitionProject(definitionId);
+        accessService.require(userId, PROJECT_VIEW, projectId, null);
         return service.listDefinitionSteps(definitionId);
     }
 
     @PostMapping("/workflow-definitions/{definitionId}/activate")
-    public WorkflowService.DefinitionView activate(@PathVariable UUID definitionId) {
+    public WorkflowService.DefinitionView activate(
+            @PathVariable UUID definitionId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+        UUID projectId = definitionProject(definitionId);
+        accessService.require(userId, PROJECT_MANAGE, projectId, null);
         return service.activateDefinition(definitionId);
     }
 
@@ -77,7 +102,9 @@ public class WorkflowController {
             @PathVariable UUID projectId,
             @PathVariable UUID scopeId,
             @PathVariable UUID definitionId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
             @Valid @RequestBody ConfigureBindingRequest request) {
+        accessService.require(userId, WORKFLOW_CONFIGURE, projectId, scopeId);
         return service.setScopeBinding(
                 projectId, scopeId, definitionId, request.enabled(), request.configurationJson());
     }
@@ -85,7 +112,9 @@ public class WorkflowController {
     @GetMapping("/projects/{projectId}/scopes/{scopeId}/workflow-bindings")
     public List<WorkflowService.BindingView> listBindings(
             @PathVariable UUID projectId,
-            @PathVariable UUID scopeId) {
+            @PathVariable UUID scopeId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+        accessService.require(userId, SCOPE_VIEW, projectId, scopeId);
         return service.listScopeBindings(projectId, scopeId);
     }
 
@@ -94,39 +123,49 @@ public class WorkflowController {
     public WorkflowService.InstanceView start(
             @PathVariable UUID projectId,
             @PathVariable UUID scopeId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
             @Valid @RequestBody StartWorkflowRequest request) {
+        accessService.require(userId, WORKFLOW_START, projectId, scopeId);
         return service.start(
-                projectId,
-                scopeId,
-                request.workflowDefinitionId(),
-                request.businessKey(),
-                request.title(),
-                request.initiatedByReference(),
-                request.contextJson());
+                projectId, scopeId, request.workflowDefinitionId(), request.businessKey(),
+                request.title(), userId.toString(), request.contextJson());
     }
 
     @PostMapping("/workflow-instances/{instanceId}/actions")
     public WorkflowService.InstanceView act(
             @PathVariable UUID instanceId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
             @Valid @RequestBody WorkflowActionRequest request) {
+        var instance = service.getInstance(instanceId);
+        accessService.require(userId, WORKFLOW_ACT, instance.projectId(), instance.scopeId());
         return service.act(
-                instanceId,
-                request.actionType(),
-                request.actionCode(),
-                request.targetStepCode(),
-                request.actorReference(),
-                request.comment(),
-                request.metadataJson());
+                instanceId, request.actionType(), request.actionCode(), request.targetStepCode(),
+                userId.toString(), request.comment(), request.metadataJson());
     }
 
     @GetMapping("/workflow-instances/{instanceId}")
-    public WorkflowService.InstanceView get(@PathVariable UUID instanceId) {
-        return service.getInstance(instanceId);
+    public WorkflowService.InstanceView get(
+            @PathVariable UUID instanceId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+        var instance = service.getInstance(instanceId);
+        accessService.require(userId, SCOPE_VIEW, instance.projectId(), instance.scopeId());
+        return instance;
     }
 
     @GetMapping("/workflow-instances/{instanceId}/history")
-    public WorkflowService.HistoryView history(@PathVariable UUID instanceId) {
+    public WorkflowService.HistoryView history(
+            @PathVariable UUID instanceId,
+            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+        var instance = service.getInstance(instanceId);
+        accessService.require(userId, SCOPE_VIEW, instance.projectId(), instance.scopeId());
         return service.history(instanceId);
+    }
+
+    private UUID definitionProject(UUID definitionId) {
+        return definitionRepository.findById(definitionId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
+                        "Workflow definition not found: " + definitionId))
+                .getProjectId();
     }
 
     public record CreateDefinitionRequest(
@@ -134,8 +173,7 @@ public class WorkflowController {
             @Min(1) Integer version,
             @NotBlank @Size(max = 240) String name,
             @NotBlank @Size(max = 100) String purposeCode,
-            @NotBlank @Size(max = 100) String requiredCapabilityCode) {
-    }
+            @NotBlank @Size(max = 100) String requiredCapabilityCode) {}
 
     public record AddStepRequest(
             @Min(1) int sequence,
@@ -143,26 +181,20 @@ public class WorkflowController {
             @NotBlank @Size(max = 240) String name,
             @NotBlank @Size(max = 100) String completionActionCode,
             String assignmentJson,
-            String configurationJson) {
-    }
+            String configurationJson) {}
 
-    public record ConfigureBindingRequest(boolean enabled, String configurationJson) {
-    }
+    public record ConfigureBindingRequest(boolean enabled, String configurationJson) {}
 
     public record StartWorkflowRequest(
             @NotNull UUID workflowDefinitionId,
             @NotBlank @Size(max = 160) String businessKey,
             @NotBlank @Size(max = 500) String title,
-            @Size(max = 200) String initiatedByReference,
-            String contextJson) {
-    }
+            String contextJson) {}
 
     public record WorkflowActionRequest(
             @NotBlank @Size(max = 32) String actionType,
             @Size(max = 100) String actionCode,
             @Size(max = 100) String targetStepCode,
-            @Size(max = 200) String actorReference,
             String comment,
-            String metadataJson) {
-    }
+            String metadataJson) {}
 }
