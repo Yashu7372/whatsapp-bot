@@ -5,69 +5,93 @@ Fresh Spring Modulith implementation of the frozen Project Control v2.1 north st
 ## Implementation rules
 
 - This application is independent from the legacy WhatsApp/CRM backend in the repository.
-- The legacy application is a behavior/reference source only; this service does not depend on it.
 - Preserve business truth, not old package structure.
-- Start with deterministic relational domain foundations.
-- No authentication/authorization implementation in the first domain slices, but identity and isolation boundaries must remain representable.
-- No microservices, Kafka, RabbitMQ, graph database, BPM engine, policy DSL, AI, or compatibility adapters in the foundation.
+- Keep business generalization in relational data/configuration; do not add technical engines prematurely.
 - Project Scope starts as a simple parent/child tree.
 - Scope capabilities are configuration records, not runtime plugins.
 - Client is not Tenant/Workspace. Organizations are global identities and may participate in projects across workspaces.
-- Do not create a domain entity merely because a company gives a workflow a business name (for example ITR, MIR, design review, or tender evaluation). Model it first as Scope + Capability + Generic Workflow. Introduce a dedicated domain only when it owns durable business data/invariants independent of the workflow.
-- Typed foreign keys and typed domain tables remain authoritative. Do not create generic target-type/target-id relationships until both sides have real domain meaning and integrity can be enforced.
-- Workflow definitions are generic project configuration. A workflow must be explicitly bound to a Project Scope, and that scope must have the workflow's required capability enabled before an instance can start.
-- Workflow assignment JSON is descriptive configuration in the workflow foundation. It does not grant access. Real user/organization authorization will be enforced later by the identity/access foundation.
+- A business workflow name such as ITR/MIR/design review is not automatically a domain entity. Model it first as Scope + Capability + Generic Workflow.
+- Typed foreign keys and deliberate typed link tables remain authoritative.
 
-## Foundation slice 01 - Project context
+## Implemented foundations
 
-The first slice proves:
+### Foundation 01 — Project context
 
 `Workspace -> Project`
 
 `Organization -> Project Participation -> Project Scope -> Scope Capability`
 
-A single organization can participate in multiple projects, under different clients/workspaces, with different project roles and scope assignments.
+One organization can participate in multiple projects/workspaces with different project roles and scope assignments.
 
-## Foundation slice 02 - Document register and revisions
-
-The second slice proves:
+### Foundation 02 — Document register
 
 `Project -> optional Project Scope -> Document -> immutable Revision history`
 
-Documents remain independent business resources. They are not workflow containers and do not own approval/ITR/inspection state.
+Documents own document truth, not workflow state. Numbering uses configurable project `seriesCode`; optional company/project metadata is stored in `metadataJson`.
 
-Document numbering is configured by `seriesCode`, not by document type alone, so one project can have multiple numbering schemes for the same document type. A generated document records the series code used; externally numbered documents do not require a series.
-
-Only stable document fields are first-class columns. Variable project/company metadata is stored in `metadataJson`; later configuration can define schemas or UI fields without expanding the core document table for every company convention.
-
-Generic document-to-arbitrary-resource links are intentionally deferred. Evidence relationships will be introduced only when the owning subject/workflow/domain exists and both sides can be validated.
-
-## Foundation slice 03 - Generic scope workflow
-
-The third slice proves:
+### Foundation 03 — Generic scope workflow
 
 `Project -> Workflow Definition -> Steps`
 
 `Project Scope -> Capability + explicit Workflow Binding`
 
-`Scope Workflow Instance -> Step Visits -> Actions / Comments / Return / Reject / Completion`
+`Workflow Instance -> Step Visits -> Actions / Comments / Return / Reject / Completion`
 
-Workflow definitions carry two pieces of meaning that are independent from company-specific names:
+The real ITR-style sequence is configuration only:
 
-- `purposeCode` - why the workflow exists in the project lifecycle, for example `WORK_VERIFICATION` or `DESIGN_REVIEW`;
-- `requiredCapabilityCode` - which scope capability must be enabled before the workflow can run.
+`Site Team -> QCE -> QC/DC -> Consultant Inspector -> Consultant RE`
 
-A definition is built in `DRAFT`, activated only after it has contiguous steps, then explicitly bound to one or more scopes. Active definitions are treated as immutable configuration for running instances; a changed process should become a new definition version.
+There is deliberately no ITR/InspectionRequest domain just because the process has that name.
 
-The foundation materializes a new step visit every time a workflow returns to an earlier step. Previous visits are never overwritten, so return/resubmission cycles remain auditable.
+### Foundation 04 — Identity and contextual access
 
-The proof test models the real sequence:
+`User -> Organization Membership -> Project Participation -> Scope Assignment -> ActorContext -> ProjectAccessService`
 
-`Site Team raise -> QCE verification -> QC/DC receiving -> Consultant Inspector review -> Consultant RE approval`
+`ProjectAccessService` is the business authorization choke point. Workspace, organization, project and scope relationships determine access; business roles are not global identities.
 
-The business key is `ITR-044`, but there is deliberately no `ITR` or `InspectionRequest` entity. The same engine also runs a separate design-approval workflow on a design scope, proving the model is not inspection-specific.
+### Foundation 05 — Document workflow + PDF proof
 
-`actorReference` and step `assignmentJson` are intentionally non-authoritative in this slice. They preserve workflow meaning and history without prematurely implementing login/roles. The future access foundation will resolve real authenticated users, organization/project participation and scope authority before allowing actions.
+Documents can be linked to workflow instances through a typed relation with foreign keys on both sides. Local PDF upload/view proves immutable revision content and access-controlled content retrieval.
+
+### Foundation 06 — Authentication + workflow-step responsibility
+
+Spring Security now authenticates local users with username/password, BCrypt, a server-side session and CSRF protection. Protected APIs no longer accept `X-Project-Control-User`; the user comes from the authenticated principal.
+
+Document creation verifies that a non-admin actor actually represents the requested originator organization in that project.
+
+A workflow step may define assignment criteria in `assignmentJson`. Supported criteria are:
+
+- `responsibility` / `responsibilityCodes`
+- `partyRole` / `partyRoles`
+- `accessLevel` / `accessLevels`
+- `workspaceRole` / `workspaceRoles`
+- `organizationId` / `organizationIds`
+
+Categories combine with AND semantics; multiple values in one category use OR semantics. `{}` adds no step-specific restriction beyond normal workflow action access. Project Admin is an explicit override. Unsupported assignment rules fail closed.
+
+The integration proof verifies that Site Team cannot execute QCE, Consultant Inspector cannot execute RE final approval, and a scope-only Viewer can see MEP resources without gaining Civil scope visibility.
+
+## Local authentication
+
+Run with the `local` profile. The service bootstraps local credential accounts. All use password:
+
+```text
+Project123!
+```
+
+Accounts:
+
+```text
+admin@local.demo
+site@local.demo
+qce@local.demo
+qcdc@local.demo
+inspector@local.demo
+re@local.demo
+viewer@local.demo
+```
+
+This is a real Spring Security session for local testing. The credential source can later be replaced by enterprise OIDC/SSO without changing `ActorContext` or `ProjectAccessService`.
 
 ## Technology baseline
 
@@ -77,30 +101,21 @@ The business key is `ITR-044`, but there is deliberately no `ITR` or `Inspection
 - PostgreSQL
 - Flyway
 - Spring Data JPA
+- Spring Security
 - Maven
 
-Java 21 is intentionally retained for broad local compatibility while using the current Spring Boot/Modulith baseline. A JDK upgrade can be evaluated independently later.
-
-## Run locally
-
-Create a PostgreSQL database named `project_control` and optionally set:
+## Run locally without Docker
 
 ```bash
-export DB_URL=jdbc:postgresql://localhost:5432/project_control
-export DB_USERNAME=postgres
-export DB_PASSWORD=postgres
+mvn -Dspring-boot.run.profiles=local spring-boot:run
 ```
 
-Then:
+The local profile uses persistent H2. CI verifies migrations/mappings and the full test suite against PostgreSQL 16.
 
-```bash
-mvn spring-boot:run
-```
+If your local database is an older foundation snapshot, stop the app and delete `project-control-local.mv.db` before restarting.
 
 ## Verify
 
 ```bash
 mvn clean verify
 ```
-
-The test profile uses H2 in PostgreSQL compatibility mode so the foundation tests remain runnable without Docker. CI also verifies the migrations and mappings against PostgreSQL.
