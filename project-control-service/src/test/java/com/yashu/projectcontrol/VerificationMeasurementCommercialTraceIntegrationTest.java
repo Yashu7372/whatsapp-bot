@@ -108,7 +108,7 @@ class VerificationMeasurementCommercialTraceIntegrationTest {
         var evidenceDocument = documentService.create(
                 project.id(), chw.id(), contractor.id(), "CHW-WVP-EVIDENCE", null,
                 "WORK_VERIFICATION_EVIDENCE", "CHW installed quantity evidence", null,
-                "CONTRACT_SHARED", "{}");
+                "PROJECT_SHARED", "{}");
         var evidenceRevision = documentService.addRevision(
                 evidenceDocument.id(), "A", "Installed CHW quantity evidence",
                 "local://verification/chw-evidence-a.pdf",
@@ -124,9 +124,17 @@ class VerificationMeasurementCommercialTraceIntegrationTest {
                 "scope://" + project.id() + "/" + chw.id() + "/chw-installed",
                 null, new BigDecimal("320"), "m", "320 m CHW installed and offered for verification");
         first = verificationService.getPackage(contractorUser.id(), project.id(), first.id()).verificationPackage();
+
+        // A verification package is consumed by cross-organization workflow/provenance reads.
+        // Narrower evidence visibility is rejected until a typed audience/contract relation can enforce it safely.
+        var firstBeforeEvidence = first;
+        assertThrows(Exception.class, () -> verificationService.addEvidence(
+                contractorUser.id(), project.id(), firstBeforeEvidence.id(), firstBeforeEvidence.version(),
+                evidenceRevision.id(), "INSTALLATION_RECORD", "ORGANIZATION_PRIVATE", true));
+
         verificationService.addEvidence(
                 contractorUser.id(), project.id(), first.id(), first.version(), evidenceRevision.id(),
-                "INSTALLATION_RECORD", "CONTRACT_SHARED", true);
+                "INSTALLATION_RECORD", "PROJECT_SHARED", true);
         first = verificationService.getPackage(contractorUser.id(), project.id(), first.id()).verificationPackage();
         first = verificationService.submit(
                 contractorUser.id(), project.id(), first.id(), first.version(), verificationWorkflow.id());
@@ -168,7 +176,7 @@ class VerificationMeasurementCommercialTraceIntegrationTest {
         followUp = verificationService.getPackage(contractorUser.id(), project.id(), followUp.id()).verificationPackage();
         verificationService.addEvidence(
                 contractorUser.id(), project.id(), followUp.id(), followUp.version(), evidenceRevision.id(),
-                "REWORK_COMPLETION_RECORD", "CONTRACT_SHARED", true);
+                "REWORK_COMPLETION_RECORD", "PROJECT_SHARED", true);
         followUp = verificationService.getPackage(contractorUser.id(), project.id(), followUp.id()).verificationPackage();
         followUp = verificationService.submit(
                 contractorUser.id(), project.id(), followUp.id(), followUp.version(), verificationWorkflow.id());
