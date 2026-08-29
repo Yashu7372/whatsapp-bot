@@ -39,6 +39,14 @@ public class AccessController {
                 context.workspaceRoles(), context.scopeAssignments(), decisions);
     }
 
+    @GetMapping("/workflow-options")
+    public ProjectAccessService.WorkflowConfigurationOptions workflowOptions(
+            @PathVariable UUID projectId,
+            @RequestParam UUID scopeId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
+        return accessService.workflowConfigurationOptions(principal.userId(), projectId, scopeId);
+    }
+
     public record DecisionView(String outcome, String reason) {}
 
     public record AccessView(
