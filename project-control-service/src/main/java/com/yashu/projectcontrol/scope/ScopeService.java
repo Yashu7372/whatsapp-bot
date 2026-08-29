@@ -80,6 +80,11 @@ public class ScopeService {
                 .toList();
     }
 
+    @Transactional(readOnly = true)
+    public void requireExistsInProject(UUID projectId, UUID scopeId) {
+        requireScope(projectId, scopeId);
+    }
+
     @Transactional
     public ScopeAssignmentView assignParticipant(
             UUID projectId,
