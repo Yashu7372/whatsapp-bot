@@ -1,13 +1,13 @@
 package com.yashu.projectcontrol.access;
 
-import tools.jackson.databind.JsonNode;
-import tools.jackson.databind.ObjectMapper;
 import com.yashu.projectcontrol.project.ProjectService;
 import com.yashu.projectcontrol.scope.ScopeService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
+import tools.jackson.databind.JsonNode;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.HashSet;
 import java.util.List;
@@ -23,7 +23,12 @@ import java.util.UUID;
 @Service
 public class ProjectAccessService {
 
+    private static final List<String> COMPLETION_ACTIONS = List.of(
+            "SUBMIT", "VERIFY", "RECEIVE", "REVIEW", "APPROVE",
+            "ACCEPT", "CONFIRM", "CERTIFY", "COMPLETE");
+
     private final IdentityAccessRepository repository;
+    private final WorkflowConfigurationOptionRepository workflowOptionRepository;
     private final IdentityService identityService;
     private final ProjectService projectService;
     private final ScopeService scopeService;
@@ -31,11 +36,13 @@ public class ProjectAccessService {
 
     public ProjectAccessService(
             IdentityAccessRepository repository,
+            WorkflowConfigurationOptionRepository workflowOptionRepository,
             IdentityService identityService,
             ProjectService projectService,
             ScopeService scopeService,
             ObjectMapper objectMapper) {
         this.repository = repository;
+        this.workflowOptionRepository = workflowOptionRepository;
         this.identityService = identityService;
         this.projectService = projectService;
         this.scopeService = scopeService;
@@ -93,6 +100,21 @@ public class ProjectAccessService {
     }
 
     @Transactional(readOnly = true)
+    public WorkflowConfigurationOptions workflowConfigurationOptions(
+            UUID userId, UUID projectId, UUID scopeId) {
+        require(userId, AccessAction.WORKFLOW_CONFIGURE, projectId, scopeId);
+        var assignments = workflowOptionRepository.scopeAssignmentOptions(projectId, scopeId).stream()
+                .map(row -> new WorkflowAssignmentOption(
+                        row.responsibilityCode(), row.accessLevel(), row.partyRole()))
+                .toList();
+        var enabledCapabilities = scopeService.listCapabilities(projectId, scopeId).stream()
+                .filter(ScopeService.CapabilityView::enabled)
+                .map(ScopeService.CapabilityView::capabilityCode)
+                .toList();
+        return new WorkflowConfigurationOptions(assignments, enabledCapabilities, COMPLETION_ACTIONS);
+    }
+
+    @Transactional(readOnly = true)
     public ActorContext requireCanRepresentOrganization(UUID userId, UUID projectId, UUID organizationId) {
         if (organizationId == null) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "originatorOrganizationId is required");
@@ -119,10 +141,43 @@ public class ProjectAccessService {
         if (context.workspaceRoles().contains("PROJECT_ADMIN")) {
             return context;
         }
-        if (assignmentJson == null || assignmentJson.isBlank() || assignmentJson.trim().equals("{}")) {
+        JsonNode root = parseAssignment(assignmentJson);
+        if (root == null) return context;
+        boolean structured = root.has("act") || root.has("view");
+        JsonNode rule = structured ? root.get("act") : root;
+        evaluateWorkflowRule(context, rule, "act");
+        return context;
+    }
+
+    @Transactional(readOnly = true)
+    public ActorContext requireWorkflowStepView(
+            UUID userId, UUID projectId, UUID scopeId, String assignmentJson) {
+        ActorContext context = require(userId, AccessAction.SCOPE_VIEW, projectId, scopeId);
+        if (context.workspaceRoles().contains("PROJECT_ADMIN")) {
             return context;
         }
+        JsonNode root = parseAssignment(assignmentJson);
+        if (root == null || !(root.has("act") || root.has("view"))) return context;
+        evaluateWorkflowRule(context, root.get("view"), "view");
+        return context;
+    }
 
+    @Transactional(readOnly = true)
+    public boolean canViewWorkflowStep(
+            UUID userId, UUID projectId, UUID scopeId, String assignmentJson) {
+        try {
+            requireWorkflowStepView(userId, projectId, scopeId, assignmentJson);
+            return true;
+        } catch (ResponseStatusException ex) {
+            if (ex.getStatusCode().value() == HttpStatus.FORBIDDEN.value()) return false;
+            throw ex;
+        }
+    }
+
+    private JsonNode parseAssignment(String assignmentJson) {
+        if (assignmentJson == null || assignmentJson.isBlank() || assignmentJson.trim().equals("{}")) {
+            return null;
+        }
         final JsonNode rule;
         try {
             rule = objectMapper.readTree(assignmentJson);
@@ -134,6 +189,15 @@ public class ProjectAccessService {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
                     "Workflow step assignment must be a JSON object");
         }
+        return rule;
+    }
+
+    private void evaluateWorkflowRule(ActorContext context, JsonNode rule, String mode) {
+        if (rule == null || rule.isNull() || (rule.isObject() && rule.size() == 0)) return;
+        if (!rule.isObject()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST,
+                    "Workflow step " + mode + " assignment must be a JSON object");
+        }
 
         boolean recognized = false;
         Set<String> responsibilities = stringValues(rule, "responsibility", "responsibilityCodes");
@@ -143,7 +207,7 @@ public class ProjectAccessService {
                     .map(ActorContext.ScopeAssignment::responsibilityCode)
                     .map(ProjectAccessService::normalize)
                     .anyMatch(responsibilities::contains);
-            if (!matched) denyStep("responsibility", responsibilities);
+            if (!matched) denyStep(mode, "responsibility", responsibilities);
         }
 
         Set<String> partyRoles = stringValues(rule, "partyRole", "partyRoles");
@@ -153,7 +217,7 @@ public class ProjectAccessService {
                     .map(ActorContext.ProjectParticipation::partyRole)
                     .map(ProjectAccessService::normalize)
                     .anyMatch(partyRoles::contains);
-            if (!matched) denyStep("party role", partyRoles);
+            if (!matched) denyStep(mode, "party role", partyRoles);
         }
 
         Set<String> accessLevels = stringValues(rule, "accessLevel", "accessLevels");
@@ -163,7 +227,7 @@ public class ProjectAccessService {
                     .map(ActorContext.ScopeAssignment::accessLevel)
                     .map(ProjectAccessService::normalize)
                     .anyMatch(accessLevels::contains);
-            if (!matched) denyStep("access level", accessLevels);
+            if (!matched) denyStep(mode, "access level", accessLevels);
         }
 
         Set<String> workspaceRoles = stringValues(rule, "workspaceRole", "workspaceRoles");
@@ -172,7 +236,7 @@ public class ProjectAccessService {
             boolean matched = context.workspaceRoles().stream()
                     .map(ProjectAccessService::normalize)
                     .anyMatch(workspaceRoles::contains);
-            if (!matched) denyStep("workspace role", workspaceRoles);
+            if (!matched) denyStep(mode, "workspace role", workspaceRoles);
         }
 
         Set<UUID> organizationIds = uuidValues(rule, "organizationId", "organizationIds");
@@ -183,15 +247,14 @@ public class ProjectAccessService {
                     .anyMatch(organizationIds::contains);
             if (!matched) {
                 throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                        "Current workflow step is assigned to a different organization");
+                        "Current workflow step " + mode + " access is assigned to a different organization");
             }
         }
 
         if (!recognized && rule.size() > 0) {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                    "Workflow step assignment contains no supported assignment criteria");
+                    "Workflow step " + mode + " assignment contains no supported assignment criteria");
         }
-        return context;
     }
 
     private AccessDecision decideFromContext(ActorContext actor, AccessAction action) {
@@ -222,8 +285,8 @@ public class ProjectAccessService {
                     "Document visibility requires project/scope visibility");
             case DOCUMENT_SUBMIT -> allowed(workspaceAdmin || canContribute,
                     "Document submission requires PROJECT_ADMIN or a CONTRIBUTE/MANAGE/APPROVE scope assignment");
-            case WORKFLOW_CONFIGURE -> allowed(workspaceAdmin || canManageScope,
-                    "Workflow configuration requires PROJECT_ADMIN or a MANAGE/APPROVE scope assignment");
+            case WORKFLOW_CONFIGURE -> allowed(workspaceAdmin,
+                    "Workflow design/configuration requires PROJECT_ADMIN workspace membership");
             case WORKFLOW_START, WORKFLOW_ACT -> allowed(workspaceAdmin || canContribute,
                     "Workflow execution requires PROJECT_ADMIN or an actionable scope assignment");
         };
@@ -238,13 +301,13 @@ public class ProjectAccessService {
 
     private static void addStrings(Set<String> values, JsonNode node) {
         if (node == null || node.isNull()) return;
-        if (node.isTextual()) {
-            values.add(normalize(node.asText()));
+        if (node.isString()) {
+            values.add(normalize(node.asString()));
             return;
         }
         if (node.isArray()) {
             node.forEach(value -> {
-                if (value.isTextual()) values.add(normalize(value.asText()));
+                if (value.isString()) values.add(normalize(value.asString()));
             });
         }
     }
@@ -258,13 +321,13 @@ public class ProjectAccessService {
 
     private static void addUuids(Set<UUID> values, JsonNode node) {
         if (node == null || node.isNull()) return;
-        if (node.isTextual()) {
-            values.add(parseUuid(node.asText()));
+        if (node.isString()) {
+            values.add(parseUuid(node.asString()));
             return;
         }
         if (node.isArray()) {
             node.forEach(value -> {
-                if (value.isTextual()) values.add(parseUuid(value.asText()));
+                if (value.isString()) values.add(parseUuid(value.asString()));
             });
         }
     }
@@ -282,9 +345,9 @@ public class ProjectAccessService {
         return value.trim().toUpperCase(Locale.ROOT).replace(' ', '_');
     }
 
-    private static void denyStep(String criterion, Set<String> expected) {
+    private static void denyStep(String mode, String criterion, Set<String> expected) {
         throw new ResponseStatusException(HttpStatus.FORBIDDEN,
-                "Current workflow step requires " + criterion + " " + expected);
+                "Current workflow step " + mode + " access requires " + criterion + " " + expected);
     }
 
     private static AccessDecision allowed(boolean allowed, String denialReason) {
@@ -312,4 +375,14 @@ public class ProjectAccessService {
     }
 
     public record AccessDecision(AccessOutcome outcome, String reason) {}
+
+    public record WorkflowAssignmentOption(
+            String responsibilityCode,
+            String accessLevel,
+            String partyRole) {}
+
+    public record WorkflowConfigurationOptions(
+            List<WorkflowAssignmentOption> assignments,
+            List<String> enabledCapabilities,
+            List<String> completionActions) {}
 }
