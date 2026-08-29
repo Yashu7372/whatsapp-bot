@@ -15,6 +15,8 @@ Fresh Spring Modulith implementation of the frozen Project Control v2.1 north st
 - Client is not Tenant/Workspace. Organizations are global identities and may participate in projects across workspaces.
 - Do not create a domain entity merely because a company gives a workflow a business name (for example ITR, MIR, design review, or tender evaluation). Model it first as Scope + Capability + Generic Workflow. Introduce a dedicated domain only when it owns durable business data/invariants independent of the workflow.
 - Typed foreign keys and typed domain tables remain authoritative. Do not create generic target-type/target-id relationships until both sides have real domain meaning and integrity can be enforced.
+- Workflow definitions are generic project configuration. A workflow must be explicitly bound to a Project Scope, and that scope must have the workflow's required capability enabled before an instance can start.
+- Workflow assignment JSON is descriptive configuration in the workflow foundation. It does not grant access. Real user/organization authorization will be enforced later by the identity/access foundation.
 
 ## Foundation slice 01 - Project context
 
@@ -39,6 +41,33 @@ Document numbering is configured by `seriesCode`, not by document type alone, so
 Only stable document fields are first-class columns. Variable project/company metadata is stored in `metadataJson`; later configuration can define schemas or UI fields without expanding the core document table for every company convention.
 
 Generic document-to-arbitrary-resource links are intentionally deferred. Evidence relationships will be introduced only when the owning subject/workflow/domain exists and both sides can be validated.
+
+## Foundation slice 03 - Generic scope workflow
+
+The third slice proves:
+
+`Project -> Workflow Definition -> Steps`
+
+`Project Scope -> Capability + explicit Workflow Binding`
+
+`Scope Workflow Instance -> Step Visits -> Actions / Comments / Return / Reject / Completion`
+
+Workflow definitions carry two pieces of meaning that are independent from company-specific names:
+
+- `purposeCode` - why the workflow exists in the project lifecycle, for example `WORK_VERIFICATION` or `DESIGN_REVIEW`;
+- `requiredCapabilityCode` - which scope capability must be enabled before the workflow can run.
+
+A definition is built in `DRAFT`, activated only after it has contiguous steps, then explicitly bound to one or more scopes. Active definitions are treated as immutable configuration for running instances; a changed process should become a new definition version.
+
+The foundation materializes a new step visit every time a workflow returns to an earlier step. Previous visits are never overwritten, so return/resubmission cycles remain auditable.
+
+The proof test models the real sequence:
+
+`Site Team raise -> QCE verification -> QC/DC receiving -> Consultant Inspector review -> Consultant RE approval`
+
+The business key is `ITR-044`, but there is deliberately no `ITR` or `InspectionRequest` entity. The same engine also runs a separate design-approval workflow on a design scope, proving the model is not inspection-specific.
+
+`actorReference` and step `assignmentJson` are intentionally non-authoritative in this slice. They preserve workflow meaning and history without prematurely implementing login/roles. The future access foundation will resolve real authenticated users, organization/project participation and scope authority before allowing actions.
 
 ## Technology baseline
 

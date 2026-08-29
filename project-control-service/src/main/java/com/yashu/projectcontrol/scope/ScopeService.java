@@ -85,6 +85,21 @@ public class ScopeService {
         requireScope(projectId, scopeId);
     }
 
+    @Transactional(readOnly = true)
+    public void requireEnabledCapability(UUID projectId, UUID scopeId, String capabilityCode) {
+        requireScope(projectId, scopeId);
+        String normalizedCapability = normalizeCode(capabilityCode);
+        ScopeCapability capability = capabilityRepository.findByScopeIdAndCapabilityCode(scopeId, normalizedCapability)
+                .orElseThrow(() -> new ResponseStatusException(
+                        HttpStatus.BAD_REQUEST,
+                        "Scope does not have required capability: " + normalizedCapability));
+        if (!capability.isEnabled()) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "Scope capability is disabled: " + normalizedCapability);
+        }
+    }
+
     @Transactional
     public ScopeAssignmentView assignParticipant(
             UUID projectId,
