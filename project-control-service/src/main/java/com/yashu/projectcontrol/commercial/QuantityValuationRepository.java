@@ -31,6 +31,15 @@ class QuantityValuationRepository {
                 valuationId);
     }
 
+    boolean measurementAlreadyValued(UUID contractItemId, UUID measurementId) {
+        Integer count = jdbc.queryForObject("""
+                select count(*)
+                from valuation_lines
+                where contract_item_id=? and measurement_id=? and status<>'VOID'
+                """, Integer.class, contractItemId, measurementId);
+        return count != null && count > 0;
+    }
+
     BigDecimal acceptedQuantityAlreadyValued(UUID contractItemId) {
         BigDecimal value = jdbc.queryForObject("""
                 select coalesce(sum(accepted_quantity),0)
