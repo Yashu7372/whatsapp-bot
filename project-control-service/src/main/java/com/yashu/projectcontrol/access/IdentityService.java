@@ -41,14 +41,46 @@ public class IdentityService {
 
     @Transactional
     public UserView createUser(String externalSubject, String email, String displayName) {
+        return createUserInternal(externalSubject, email, displayName, null);
+    }
+
+    @Transactional
+    public UserView createCredentialUser(String externalSubject, String email, String displayName, String passwordHash) {
+        if (passwordHash == null || passwordHash.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "passwordHash is required");
+        }
+        return createUserInternal(externalSubject, email, displayName, passwordHash);
+    }
+
+    @Transactional
+    public UserView ensureCredentialUser(String externalSubject, String email, String displayName, String passwordHash) {
+        String subject = required(externalSubject, "externalSubject");
+        String normalizedEmail = required(email, "email").toLowerCase(Locale.ROOT);
+        String name = required(displayName, "displayName");
+        if (passwordHash == null || passwordHash.isBlank()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "passwordHash is required");
+        }
+        var existing = repository.findUserByEmail(normalizedEmail)
+                .or(() -> repository.findUserBySubject(subject));
+        if (existing.isPresent()) {
+            repository.updatePasswordHash(existing.get().id(), passwordHash);
+            var row = repository.requireUser(existing.get().id());
+            return toUserView(row);
+        }
+        return toUserView(repository.createUser(subject, normalizedEmail, name, passwordHash));
+    }
+
+    private UserView createUserInternal(String externalSubject, String email, String displayName, String passwordHash) {
         String subject = required(externalSubject, "externalSubject");
         if (repository.existsBySubject(subject)) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "User subject already exists: " + subject);
         }
         String name = required(displayName, "displayName");
         String normalizedEmail = email == null || email.isBlank() ? null : email.trim().toLowerCase(Locale.ROOT);
-        var row = repository.createUser(subject, normalizedEmail, name);
-        return new UserView(row.id(), row.externalSubject(), row.email(), row.displayName(), row.status());
+        if (normalizedEmail != null && repository.existsByEmail(normalizedEmail)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "User email already exists: " + normalizedEmail);
+        }
+        return toUserView(repository.createUser(subject, normalizedEmail, name, passwordHash));
     }
 
     @Transactional
@@ -112,8 +144,17 @@ public class IdentityService {
 
     @Transactional(readOnly = true)
     public UserView getUser(UUID userId) {
-        var row = requireActiveUser(userId);
-        return new UserView(row.id(), row.externalSubject(), row.email(), row.displayName(), row.status());
+        return toUserView(requireActiveUser(userId));
+    }
+
+    @Transactional(readOnly = true)
+    public UserView getUserByEmail(String email) {
+        var row = repository.findUserByEmail(required(email, "email"))
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+        if (!"ACTIVE".equals(row.status())) {
+            throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not active");
+        }
+        return toUserView(row);
     }
 
     IdentityAccessRepository.UserRow requireActiveUser(UUID userId) {
@@ -123,6 +164,10 @@ public class IdentityService {
             throw new ResponseStatusException(HttpStatus.FORBIDDEN, "User is not active");
         }
         return row;
+    }
+
+    private static UserView toUserView(IdentityAccessRepository.UserRow row) {
+        return new UserView(row.id(), row.externalSubject(), row.email(), row.displayName(), row.status());
     }
 
     private static void validateDates(LocalDate validFrom, LocalDate validTo) {

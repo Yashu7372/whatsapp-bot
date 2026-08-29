@@ -9,6 +9,7 @@ import com.yashu.projectcontrol.organization.OrganizationService;
 import com.yashu.projectcontrol.participation.ParticipationService;
 import com.yashu.projectcontrol.project.ProjectService;
 import com.yashu.projectcontrol.scope.ScopeService;
+import com.yashu.projectcontrol.workflow.AuthorizedWorkflowExecutionService;
 import com.yashu.projectcontrol.workflow.WorkflowService;
 import com.yashu.projectcontrol.workspace.WorkspaceService;
 import org.junit.jupiter.api.Test;
@@ -22,6 +23,7 @@ import java.nio.charset.StandardCharsets;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.DOCUMENT_CONTENT_VIEW;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.DOCUMENT_SUBMIT;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.DOCUMENT_VIEW;
+import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.SCOPE_VIEW;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_ACT;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_CONFIGURE;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_START;
@@ -45,10 +47,11 @@ class LocalUserDocumentWorkflowIntegrationTest {
     @Autowired DocumentService documentService;
     @Autowired LocalDocumentContentStore contentStore;
     @Autowired WorkflowService workflowService;
+    @Autowired AuthorizedWorkflowExecutionService executionService;
     @Autowired DocumentWorkflowService documentWorkflowService;
 
     @Test
-    void submitterReviewerAndViewerExerciseOneTypedDocumentWorkflow() {
+    void realItrResponsibilitiesAndScopedVisibilityAreEnforced() {
         var workspace = workspaceService.create("LOCAL-USERS", "Local user flow workspace");
         var project = projectService.create(
                 workspace.id(), "LOCAL-USERS-A", "Local user flow project", null,
@@ -59,46 +62,50 @@ class LocalUserDocumentWorkflowIntegrationTest {
                 project.id(), contractor.id(), "SUBCONTRACTOR", null, null, null);
         var consultantParticipant = participationService.create(
                 project.id(), consultant.id(), "CONSULTANT", null, null, null);
-        var scope = scopeService.create(
+        var mep = scopeService.create(
                 project.id(), null, "DISCIPLINE", "MEP", "MEP", null,
                 null, null, "{}");
-        scopeService.assignParticipant(project.id(), scope.id(), contractorParticipant.id(), "MEP delivery");
-        scopeService.assignParticipant(project.id(), scope.id(), consultantParticipant.id(), "MEP review");
-        scopeService.setCapability(project.id(), scope.id(), "DOCUMENT_CONTROL", true, "{}");
-        scopeService.setCapability(project.id(), scope.id(), "INSPECTION", true, "{}");
+        var civil = scopeService.create(
+                project.id(), null, "DISCIPLINE", "CIVIL", "Civil", null,
+                null, null, "{}");
+        scopeService.assignParticipant(project.id(), mep.id(), contractorParticipant.id(), "MEP delivery");
+        scopeService.assignParticipant(project.id(), mep.id(), consultantParticipant.id(), "MEP review");
+        scopeService.assignParticipant(project.id(), civil.id(), contractorParticipant.id(), "Civil delivery");
+        scopeService.setCapability(project.id(), mep.id(), "DOCUMENT_CONTROL", true, "{}");
+        scopeService.setCapability(project.id(), mep.id(), "INSPECTION", true, "{}");
 
-        var admin = identityService.createUser("local:admin", "admin@local.demo", "Project Admin");
+        var admin = identityService.createUser("test:admin", "admin@test.demo", "Project Admin");
         identityService.addWorkspaceMembership(admin.id(), workspace.id(), "PROJECT_ADMIN", null, null);
 
-        var submitter = identityService.createUser("local:submitter", "submitter@local.demo", "Site Submitter");
-        identityService.addOrganizationMembership(submitter.id(), contractor.id(), "SITE_ENGINEER", null, null);
-        identityService.addScopeAssignment(
-                submitter.id(), project.id(), scope.id(), contractorParticipant.id(),
-                "SITE_ENGINEER", "CONTRIBUTE", null, null);
+        var site = userFor(identityService, contractor.id(), contractorParticipant.id(), project.id(), mep.id(),
+                "test:site", "site@test.demo", "Site Team", "SITE_TEAM", "CONTRIBUTE");
+        var qce = userFor(identityService, contractor.id(), contractorParticipant.id(), project.id(), mep.id(),
+                "test:qce", "qce@test.demo", "QCE", "QCE", "APPROVE");
+        var qcdc = userFor(identityService, contractor.id(), contractorParticipant.id(), project.id(), mep.id(),
+                "test:qcdc", "qcdc@test.demo", "QC/DC", "QC_DC", "CONTRIBUTE");
+        var inspector = userFor(identityService, consultant.id(), consultantParticipant.id(), project.id(), mep.id(),
+                "test:inspector", "inspector@test.demo", "Consultant Inspector", "CONSULTANT_INSPECTOR", "APPROVE");
+        var re = userFor(identityService, consultant.id(), consultantParticipant.id(), project.id(), mep.id(),
+                "test:re", "re@test.demo", "Consultant RE", "CONSULTANT_RE", "APPROVE");
+        var viewer = userFor(identityService, consultant.id(), consultantParticipant.id(), project.id(), mep.id(),
+                "test:viewer", "viewer@test.demo", "Scoped Viewer", "VIEWER", "VIEW");
 
-        var reviewer = identityService.createUser("local:reviewer", "reviewer@local.demo", "Consultant Reviewer");
-        identityService.addOrganizationMembership(reviewer.id(), consultant.id(), "CONSULTANT_RE", null, null);
-        identityService.addScopeAssignment(
-                reviewer.id(), project.id(), scope.id(), consultantParticipant.id(),
-                "CONSULTANT_RE", "APPROVE", null, null);
+        assertEquals(ALLOW, accessService.decide(site.id(), DOCUMENT_SUBMIT, project.id(), mep.id()).outcome());
+        assertEquals(ALLOW, accessService.decide(viewer.id(), DOCUMENT_VIEW, project.id(), mep.id()).outcome());
+        assertEquals(ALLOW, accessService.decide(viewer.id(), DOCUMENT_CONTENT_VIEW, project.id(), mep.id()).outcome());
+        assertEquals(DENY, accessService.decide(viewer.id(), DOCUMENT_SUBMIT, project.id(), mep.id()).outcome());
+        assertEquals(DENY, accessService.decide(viewer.id(), WORKFLOW_ACT, project.id(), mep.id()).outcome());
+        assertEquals(DENY, accessService.decide(viewer.id(), SCOPE_VIEW, project.id(), civil.id()).outcome());
+        assertEquals(DENY, accessService.decide(site.id(), WORKFLOW_CONFIGURE, project.id(), mep.id()).outcome());
 
-        var viewer = identityService.createUser("local:viewer", "viewer@local.demo", "Read-only Viewer");
-        identityService.addWorkspaceMembership(viewer.id(), workspace.id(), "PROJECT_VIEWER", null, null);
-
-        assertEquals(ALLOW, accessService.decide(submitter.id(), DOCUMENT_SUBMIT, project.id(), scope.id()).outcome());
-        assertEquals(ALLOW, accessService.decide(submitter.id(), WORKFLOW_START, project.id(), scope.id()).outcome());
-        assertEquals(DENY, accessService.decide(submitter.id(), WORKFLOW_CONFIGURE, project.id(), null).outcome());
-        assertEquals(ALLOW, accessService.decide(reviewer.id(), WORKFLOW_ACT, project.id(), scope.id()).outcome());
-        assertEquals(ALLOW, accessService.decide(viewer.id(), DOCUMENT_VIEW, project.id(), scope.id()).outcome());
-        assertEquals(ALLOW, accessService.decide(viewer.id(), DOCUMENT_CONTENT_VIEW, project.id(), scope.id()).outcome());
-        assertEquals(DENY, accessService.decide(viewer.id(), DOCUMENT_SUBMIT, project.id(), scope.id()).outcome());
-        assertEquals(DENY, accessService.decide(viewer.id(), WORKFLOW_ACT, project.id(), scope.id()).outcome());
+        accessService.requireCanRepresentOrganization(site.id(), project.id(), contractor.id());
+        assertThrows(ResponseStatusException.class,
+                () -> accessService.requireCanRepresentOrganization(site.id(), project.id(), consultant.id()));
 
         var document = documentService.create(
-                project.id(), scope.id(), contractor.id(), "LOCAL-DOC-001", null,
+                project.id(), mep.id(), contractor.id(), "LOCAL-DOC-001", null,
                 "SHOP_DRAWING", "CHW Routing Shop Drawing", "Local access proof",
                 "PROJECT", "{\"discipline\":\"MEP\"}");
-
         byte[] pdf = "%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF".getBytes(StandardCharsets.US_ASCII);
         var stored = contentStore.storePdf(pdf, "chw-routing-a.pdf");
         var revision = documentService.addRevision(
@@ -108,35 +115,70 @@ class LocalUserDocumentWorkflowIntegrationTest {
         assertArrayEquals(pdf, contentStore.read(stored.contentUri()));
 
         var definition = workflowService.createDefinition(
-                project.id(), "DOCUMENT_REVIEW", 1, "Document review",
-                "DOCUMENT_REVIEW", "INSPECTION");
-        workflowService.addStep(definition.id(), 1, "SUBMIT", "Submit document", "SUBMIT", "{}", "{}");
-        workflowService.addStep(definition.id(), 2, "REVIEW", "Reviewer decision", "APPROVE", "{}", "{}");
+                project.id(), "ITR_APPROVAL", 1, "Work Verification / ITR Approval",
+                "WORK_VERIFICATION", "INSPECTION");
+        addStep(definition.id(), 1, "SITE_TEAM", "Site Team Raise", "SUBMIT", "SITE_TEAM");
+        addStep(definition.id(), 2, "QCE_VERIFY", "QCE Verification", "VERIFY", "QCE");
+        addStep(definition.id(), 3, "QC_DC_RECEIVE", "QC/DC Receiving", "RECEIVE", "QC_DC");
+        addStep(definition.id(), 4, "CONSULTANT_INSPECT", "Consultant Inspector Review", "REVIEW", "CONSULTANT_INSPECTOR");
+        addStep(definition.id(), 5, "RE_FINAL_APPROVAL", "Consultant RE Final Approval", "APPROVE", "CONSULTANT_RE");
         workflowService.activateDefinition(definition.id());
-        workflowService.setScopeBinding(project.id(), scope.id(), definition.id(), true, "{}");
+        workflowService.setScopeBinding(project.id(), mep.id(), definition.id(), true, "{}");
 
-        assertThrows(ResponseStatusException.class, () -> documentWorkflowService.startForDocument(
-                viewer.id(), document.id(), definition.id(), "DOC-REVIEW-VIEWER",
-                "Viewer must not start", "{}"));
-
+        assertEquals(ALLOW, accessService.decide(site.id(), WORKFLOW_START, project.id(), mep.id()).outcome());
         var instance = documentWorkflowService.startForDocument(
-                submitter.id(), document.id(), definition.id(), "DOC-REVIEW-001",
-                "Review CHW routing shop drawing", "{\"revision\":\"A\"}");
-        assertEquals(1, documentWorkflowService.listForDocument(viewer.id(), document.id()).size());
-        assertEquals("SUBMIT", instance.currentStep().stepCode());
+                site.id(), document.id(), definition.id(), "ITR-001",
+                "CHW installation verification", "{\"revision\":\"A\"}");
+        assertEquals("SITE_TEAM", instance.currentStep().stepCode());
 
-        accessService.require(submitter.id(), WORKFLOW_ACT, project.id(), scope.id());
-        instance = workflowService.act(
-                instance.id(), "COMPLETE_STEP", "SUBMIT", null,
-                submitter.id().toString(), "Submitted for consultant review", "{}");
-        assertEquals("REVIEW", instance.currentStep().stepCode());
+        instance = executionService.act(site.id(), instance.id(), "COMPLETE_STEP", "SUBMIT", null,
+                "Raised by site team", "{}");
+        assertEquals("QCE_VERIFY", instance.currentStep().stepCode());
+        assertThrows(ResponseStatusException.class, () -> executionService.act(
+                site.id(), instance.id(), "COMPLETE_STEP", "VERIFY", null, "Wrong actor", "{}"));
 
-        assertThrows(ResponseStatusException.class,
-                () -> accessService.require(viewer.id(), WORKFLOW_ACT, project.id(), scope.id()));
-        accessService.require(reviewer.id(), WORKFLOW_ACT, project.id(), scope.id());
-        instance = workflowService.act(
-                instance.id(), "COMPLETE_STEP", "APPROVE", null,
-                reviewer.id().toString(), "Reviewed and approved", "{}");
+        instance = executionService.act(qce.id(), instance.id(), "COMPLETE_STEP", "VERIFY", null,
+                "QCE verified", "{}");
+        assertEquals("QC_DC_RECEIVE", instance.currentStep().stepCode());
+        instance = executionService.act(qcdc.id(), instance.id(), "COMPLETE_STEP", "RECEIVE", null,
+                "Received by QC/DC", "{}");
+        assertEquals("CONSULTANT_INSPECT", instance.currentStep().stepCode());
+        instance = executionService.act(inspector.id(), instance.id(), "COMMENT", null, null,
+                "Inspection satisfactory", "{}");
+        assertEquals("CONSULTANT_INSPECT", instance.currentStep().stepCode());
+        instance = executionService.act(inspector.id(), instance.id(), "COMPLETE_STEP", "REVIEW", null,
+                "Forwarded to RE", "{}");
+        assertEquals("RE_FINAL_APPROVAL", instance.currentStep().stepCode());
+        assertThrows(ResponseStatusException.class, () -> executionService.act(
+                inspector.id(), instance.id(), "COMPLETE_STEP", "APPROVE", null, "Wrong actor", "{}"));
+        instance = executionService.act(re.id(), instance.id(), "COMPLETE_STEP", "APPROVE", null,
+                "Final approval", "{}");
         assertEquals("COMPLETED", instance.status());
+        assertEquals(1, documentWorkflowService.listForDocument(viewer.id(), document.id()).size());
+    }
+
+    private IdentityService.UserView userFor(
+            IdentityService identityService,
+            java.util.UUID organizationId,
+            java.util.UUID participantId,
+            java.util.UUID projectId,
+            java.util.UUID scopeId,
+            String subject,
+            String email,
+            String name,
+            String responsibility,
+            String accessLevel) {
+        var user = identityService.createUser(subject, email, name);
+        identityService.addOrganizationMembership(user.id(), organizationId, responsibility, null, null);
+        identityService.addScopeAssignment(
+                user.id(), projectId, scopeId, participantId, responsibility, accessLevel, null, null);
+        return user;
+    }
+
+    private void addStep(java.util.UUID definitionId, int sequence, String code, String name,
+                         String action, String responsibility) {
+        workflowService.addStep(
+                definitionId, sequence, code, name, action,
+                "{\"responsibility\":\"" + responsibility + "\"}", "{}");
     }
 }

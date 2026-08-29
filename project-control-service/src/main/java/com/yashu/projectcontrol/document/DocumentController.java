@@ -1,13 +1,13 @@
 package com.yashu.projectcontrol.document;
 
-import com.yashu.projectcontrol.access.AccessController;
 import com.yashu.projectcontrol.access.ProjectAccessService;
+import com.yashu.projectcontrol.access.ProjectControlPrincipal;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
@@ -40,9 +40,9 @@ public class DocumentController {
     @PostMapping("/projects/{projectId}/document-number-series")
     public ResponseEntity<DocumentNumberService.SeriesView> defineSeries(
             @PathVariable UUID projectId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal,
             @RequestBody DefineSeriesRequest request) {
-        accessService.require(userId, PROJECT_MANAGE, projectId, null);
+        accessService.require(principal.userId(), PROJECT_MANAGE, projectId, null);
         return ResponseEntity.ok(numberService.defineSeries(
                 projectId,
                 request.seriesCode(),
@@ -55,17 +55,19 @@ public class DocumentController {
     @GetMapping("/projects/{projectId}/document-number-series")
     public ResponseEntity<List<DocumentNumberService.SeriesView>> listSeries(
             @PathVariable UUID projectId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
-        accessService.require(userId, PROJECT_VIEW, projectId, null);
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
+        accessService.require(principal.userId(), PROJECT_VIEW, projectId, null);
         return ResponseEntity.ok(numberService.listSeries(projectId));
     }
 
     @PostMapping("/projects/{projectId}/documents")
     public ResponseEntity<DocumentService.DocumentView> create(
             @PathVariable UUID projectId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal,
             @RequestBody CreateDocumentRequest request) {
+        UUID userId = principal.userId();
         accessService.require(userId, DOCUMENT_SUBMIT, projectId, request.primaryScopeId());
+        accessService.requireCanRepresentOrganization(userId, projectId, request.originatorOrganizationId());
         return ResponseEntity.ok(documentService.create(
                 projectId,
                 request.primaryScopeId(),
@@ -82,7 +84,8 @@ public class DocumentController {
     @GetMapping("/projects/{projectId}/documents")
     public ResponseEntity<List<DocumentService.DocumentView>> list(
             @PathVariable UUID projectId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
+        UUID userId = principal.userId();
         accessService.require(userId, PROJECT_VIEW, projectId, null);
         List<DocumentService.DocumentView> visible = documentService.listByProject(projectId).stream()
                 .filter(document -> accessService.decide(
@@ -94,19 +97,19 @@ public class DocumentController {
     @GetMapping("/documents/{documentId}")
     public ResponseEntity<DocumentService.DocumentView> get(
             @PathVariable UUID documentId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
         var document = documentService.get(documentId);
-        accessService.require(userId, DOCUMENT_VIEW, document.projectId(), document.primaryScopeId());
+        accessService.require(principal.userId(), DOCUMENT_VIEW, document.projectId(), document.primaryScopeId());
         return ResponseEntity.ok(document);
     }
 
     @PostMapping("/documents/{documentId}/revisions")
     public ResponseEntity<DocumentService.RevisionView> addRevision(
             @PathVariable UUID documentId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal,
             @RequestBody AddRevisionRequest request) {
         var document = documentService.get(documentId);
-        accessService.require(userId, DOCUMENT_SUBMIT, document.projectId(), document.primaryScopeId());
+        accessService.require(principal.userId(), DOCUMENT_SUBMIT, document.projectId(), document.primaryScopeId());
         return ResponseEntity.ok(documentService.addRevision(
                 documentId,
                 request.revisionCode(),
@@ -121,9 +124,9 @@ public class DocumentController {
     @GetMapping("/documents/{documentId}/revisions")
     public ResponseEntity<List<DocumentService.RevisionView>> revisions(
             @PathVariable UUID documentId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
         var document = documentService.get(documentId);
-        accessService.require(userId, DOCUMENT_VIEW, document.projectId(), document.primaryScopeId());
+        accessService.require(principal.userId(), DOCUMENT_VIEW, document.projectId(), document.primaryScopeId());
         return ResponseEntity.ok(documentService.listRevisions(documentId));
     }
 

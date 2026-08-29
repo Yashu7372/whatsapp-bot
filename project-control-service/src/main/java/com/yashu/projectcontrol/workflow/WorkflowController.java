@@ -1,19 +1,19 @@
 package com.yashu.projectcontrol.workflow;
 
-import com.yashu.projectcontrol.access.AccessController;
 import com.yashu.projectcontrol.access.ProjectAccessService;
+import com.yashu.projectcontrol.access.ProjectControlPrincipal;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.Min;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Size;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
-import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
@@ -25,7 +25,6 @@ import java.util.UUID;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.PROJECT_MANAGE;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.PROJECT_VIEW;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.SCOPE_VIEW;
-import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_ACT;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_CONFIGURE;
 import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.WORKFLOW_START;
 
@@ -34,14 +33,17 @@ import static com.yashu.projectcontrol.access.ProjectAccessService.AccessAction.
 public class WorkflowController {
 
     private final WorkflowService service;
+    private final AuthorizedWorkflowExecutionService executionService;
     private final WorkflowDefinitionRepository definitionRepository;
     private final ProjectAccessService accessService;
 
     public WorkflowController(
             WorkflowService service,
+            AuthorizedWorkflowExecutionService executionService,
             WorkflowDefinitionRepository definitionRepository,
             ProjectAccessService accessService) {
         this.service = service;
+        this.executionService = executionService;
         this.definitionRepository = definitionRepository;
         this.accessService = accessService;
     }
@@ -50,9 +52,9 @@ public class WorkflowController {
     @ResponseStatus(HttpStatus.CREATED)
     public WorkflowService.DefinitionView createDefinition(
             @PathVariable UUID projectId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal,
             @Valid @RequestBody CreateDefinitionRequest request) {
-        accessService.require(userId, PROJECT_MANAGE, projectId, null);
+        accessService.require(principal.userId(), PROJECT_MANAGE, projectId, null);
         return service.createDefinition(
                 projectId, request.code(), request.version(), request.name(),
                 request.purposeCode(), request.requiredCapabilityCode());
@@ -61,8 +63,8 @@ public class WorkflowController {
     @GetMapping("/projects/{projectId}/workflow-definitions")
     public List<WorkflowService.DefinitionView> listDefinitions(
             @PathVariable UUID projectId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
-        accessService.require(userId, PROJECT_VIEW, projectId, null);
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
+        accessService.require(principal.userId(), PROJECT_VIEW, projectId, null);
         return service.listDefinitions(projectId);
     }
 
@@ -70,10 +72,10 @@ public class WorkflowController {
     @ResponseStatus(HttpStatus.CREATED)
     public WorkflowService.StepDefinitionView addStep(
             @PathVariable UUID definitionId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal,
             @Valid @RequestBody AddStepRequest request) {
         UUID projectId = definitionProject(definitionId);
-        accessService.require(userId, PROJECT_MANAGE, projectId, null);
+        accessService.require(principal.userId(), PROJECT_MANAGE, projectId, null);
         return service.addStep(
                 definitionId, request.sequence(), request.stepCode(), request.name(),
                 request.completionActionCode(), request.assignmentJson(), request.configurationJson());
@@ -82,18 +84,18 @@ public class WorkflowController {
     @GetMapping("/workflow-definitions/{definitionId}/steps")
     public List<WorkflowService.StepDefinitionView> listSteps(
             @PathVariable UUID definitionId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
         UUID projectId = definitionProject(definitionId);
-        accessService.require(userId, PROJECT_VIEW, projectId, null);
+        accessService.require(principal.userId(), PROJECT_VIEW, projectId, null);
         return service.listDefinitionSteps(definitionId);
     }
 
     @PostMapping("/workflow-definitions/{definitionId}/activate")
     public WorkflowService.DefinitionView activate(
             @PathVariable UUID definitionId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
         UUID projectId = definitionProject(definitionId);
-        accessService.require(userId, PROJECT_MANAGE, projectId, null);
+        accessService.require(principal.userId(), PROJECT_MANAGE, projectId, null);
         return service.activateDefinition(definitionId);
     }
 
@@ -102,9 +104,9 @@ public class WorkflowController {
             @PathVariable UUID projectId,
             @PathVariable UUID scopeId,
             @PathVariable UUID definitionId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal,
             @Valid @RequestBody ConfigureBindingRequest request) {
-        accessService.require(userId, WORKFLOW_CONFIGURE, projectId, scopeId);
+        accessService.require(principal.userId(), WORKFLOW_CONFIGURE, projectId, scopeId);
         return service.setScopeBinding(
                 projectId, scopeId, definitionId, request.enabled(), request.configurationJson());
     }
@@ -113,8 +115,8 @@ public class WorkflowController {
     public List<WorkflowService.BindingView> listBindings(
             @PathVariable UUID projectId,
             @PathVariable UUID scopeId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
-        accessService.require(userId, SCOPE_VIEW, projectId, scopeId);
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
+        accessService.require(principal.userId(), SCOPE_VIEW, projectId, scopeId);
         return service.listScopeBindings(projectId, scopeId);
     }
 
@@ -123,41 +125,40 @@ public class WorkflowController {
     public WorkflowService.InstanceView start(
             @PathVariable UUID projectId,
             @PathVariable UUID scopeId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal,
             @Valid @RequestBody StartWorkflowRequest request) {
-        accessService.require(userId, WORKFLOW_START, projectId, scopeId);
+        accessService.require(principal.userId(), WORKFLOW_START, projectId, scopeId);
         return service.start(
                 projectId, scopeId, request.workflowDefinitionId(), request.businessKey(),
-                request.title(), userId.toString(), request.contextJson());
+                request.title(), principal.userId().toString(), request.contextJson());
     }
 
     @PostMapping("/workflow-instances/{instanceId}/actions")
     public WorkflowService.InstanceView act(
             @PathVariable UUID instanceId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId,
+            @AuthenticationPrincipal ProjectControlPrincipal principal,
             @Valid @RequestBody WorkflowActionRequest request) {
-        var instance = service.getInstance(instanceId);
-        accessService.require(userId, WORKFLOW_ACT, instance.projectId(), instance.scopeId());
-        return service.act(
-                instanceId, request.actionType(), request.actionCode(), request.targetStepCode(),
-                userId.toString(), request.comment(), request.metadataJson());
+        return executionService.act(
+                principal.userId(), instanceId,
+                request.actionType(), request.actionCode(), request.targetStepCode(),
+                request.comment(), request.metadataJson());
     }
 
     @GetMapping("/workflow-instances/{instanceId}")
     public WorkflowService.InstanceView get(
             @PathVariable UUID instanceId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
         var instance = service.getInstance(instanceId);
-        accessService.require(userId, SCOPE_VIEW, instance.projectId(), instance.scopeId());
+        accessService.require(principal.userId(), SCOPE_VIEW, instance.projectId(), instance.scopeId());
         return instance;
     }
 
     @GetMapping("/workflow-instances/{instanceId}/history")
     public WorkflowService.HistoryView history(
             @PathVariable UUID instanceId,
-            @RequestHeader(AccessController.ACTOR_HEADER) UUID userId) {
+            @AuthenticationPrincipal ProjectControlPrincipal principal) {
         var instance = service.getInstance(instanceId);
-        accessService.require(userId, SCOPE_VIEW, instance.projectId(), instance.scopeId());
+        accessService.require(principal.userId(), SCOPE_VIEW, instance.projectId(), instance.scopeId());
         return service.history(instanceId);
     }
 

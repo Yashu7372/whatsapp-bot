@@ -17,12 +17,12 @@ class IdentityAccessRepository {
         this.jdbc = jdbc;
     }
 
-    UserRow createUser(String externalSubject, String email, String displayName) {
+    UserRow createUser(String externalSubject, String email, String displayName, String passwordHash) {
         UUID id = UUID.randomUUID();
         jdbc.update("""
-                insert into user_accounts(id,external_subject,email,display_name,status,created_at)
-                values(?,?,?,?, 'ACTIVE', current_timestamp)
-                """, id, externalSubject, email, displayName);
+                insert into user_accounts(id,external_subject,email,display_name,status,created_at,password_hash)
+                values(?,?,?,?, 'ACTIVE', current_timestamp, ?)
+                """, id, externalSubject, email, displayName, passwordHash);
         return requireUser(id);
     }
 
@@ -32,17 +32,40 @@ class IdentityAccessRepository {
         return count != null && count > 0;
     }
 
+    boolean existsByEmail(String email) {
+        if (email == null) return false;
+        Integer count = jdbc.queryForObject(
+                "select count(*) from user_accounts where lower(email)=lower(?)", Integer.class, email);
+        return count != null && count > 0;
+    }
+
     UserRow requireUser(UUID userId) {
         return findUser(userId).orElseThrow();
     }
 
     Optional<UserRow> findUser(UUID userId) {
         return jdbc.query("""
-                select id,external_subject,email,display_name,status
+                select id,external_subject,email,display_name,status,password_hash
                 from user_accounts where id=?
-                """, (rs, n) -> new UserRow(
-                rs.getObject("id", UUID.class), rs.getString("external_subject"), rs.getString("email"),
-                rs.getString("display_name"), rs.getString("status")), userId).stream().findFirst();
+                """, (rs, n) -> mapUser(rs), userId).stream().findFirst();
+    }
+
+    Optional<UserRow> findUserByEmail(String email) {
+        return jdbc.query("""
+                select id,external_subject,email,display_name,status,password_hash
+                from user_accounts where lower(email)=lower(?)
+                """, (rs, n) -> mapUser(rs), email).stream().findFirst();
+    }
+
+    Optional<UserRow> findUserBySubject(String externalSubject) {
+        return jdbc.query("""
+                select id,external_subject,email,display_name,status,password_hash
+                from user_accounts where external_subject=?
+                """, (rs, n) -> mapUser(rs), externalSubject).stream().findFirst();
+    }
+
+    void updatePasswordHash(UUID userId, String passwordHash) {
+        jdbc.update("update user_accounts set password_hash=? where id=?", passwordHash, userId);
     }
 
     WorkspaceMembershipRow addWorkspaceMembership(
@@ -165,12 +188,19 @@ class IdentityAccessRepository {
         return count != null && count > 0;
     }
 
+    private static UserRow mapUser(java.sql.ResultSet rs) throws java.sql.SQLException {
+        return new UserRow(
+                rs.getObject("id", UUID.class), rs.getString("external_subject"), rs.getString("email"),
+                rs.getString("display_name"), rs.getString("status"), rs.getString("password_hash"));
+    }
+
     private static LocalDate date(java.sql.ResultSet rs, String column) throws java.sql.SQLException {
         java.sql.Date value = rs.getDate(column);
         return value == null ? null : value.toLocalDate();
     }
 
-    record UserRow(UUID id, String externalSubject, String email, String displayName, String status) {}
+    record UserRow(UUID id, String externalSubject, String email, String displayName,
+                   String status, String passwordHash) {}
     record WorkspaceMembershipRow(UUID id, UUID workspaceId, String accessRole, String status,
                                   LocalDate validFrom, LocalDate validTo) {}
     record OrganizationMembershipRow(UUID id, UUID organizationId, String responsibilityCode, String status,
