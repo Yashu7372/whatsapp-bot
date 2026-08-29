@@ -3,6 +3,7 @@ package com.yashu.projectcontrol.commercial;
 import com.yashu.projectcontrol.financial.FinancialAccessService;
 import com.yashu.projectcontrol.project.ProjectService;
 import com.yashu.projectcontrol.scope.ScopeService;
+import com.yashu.projectcontrol.verification.VerificationService;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -20,19 +21,25 @@ import java.util.UUID;
 public class CommercialService {
 
     private final CommercialRepository repository;
+    private final QuantityValuationRepository quantityValuationRepository;
     private final ProjectService projectService;
     private final ScopeService scopeService;
     private final FinancialAccessService financialAccessService;
+    private final VerificationService verificationService;
 
     public CommercialService(
             CommercialRepository repository,
+            QuantityValuationRepository quantityValuationRepository,
             ProjectService projectService,
             ScopeService scopeService,
-            FinancialAccessService financialAccessService) {
+            FinancialAccessService financialAccessService,
+            VerificationService verificationService) {
         this.repository = repository;
+        this.quantityValuationRepository = quantityValuationRepository;
         this.projectService = projectService;
         this.scopeService = scopeService;
         this.financialAccessService = financialAccessService;
+        this.verificationService = verificationService;
     }
 
     @Transactional
@@ -104,6 +111,9 @@ public class CommercialService {
         BigDecimal normalizedQuantity = optionalNonNegative(plannedQuantity, "plannedQuantity");
         BigDecimal normalizedValue;
         if (method.equals("QUANTITY_RATE")) {
+            if (scopeId == null) {
+                throw bad("QUANTITY_RATE contract item requires a project scope for verification/measurement traceability");
+            }
             if (normalizedRate == null || normalizedQuantity == null || unit == null || unit.isBlank()) {
                 throw bad("QUANTITY_RATE contract item requires unit, plannedQuantity and rate");
             }
@@ -130,6 +140,7 @@ public class CommercialService {
         return repository.listItems(contractId).stream().map(CommercialService::toView).toList();
     }
 
+    /** Backward-compatible non-quantity entry point. */
     @Transactional
     public ValuationView createValuation(
             UUID actorUserId,
@@ -143,6 +154,26 @@ public class CommercialService {
             BigDecimal currentValue,
             BigDecimal retention,
             BigDecimal otherDeductions) {
+        return createValuation(
+                actorUserId, projectId, contractId, contractItemId, valuationNumber,
+                sourceType, sourceReference, sourceDocumentRevisionId, null,
+                currentValue, retention, otherDeductions);
+    }
+
+    @Transactional
+    public ValuationView createValuation(
+            UUID actorUserId,
+            UUID projectId,
+            UUID contractId,
+            UUID contractItemId,
+            String valuationNumber,
+            String sourceType,
+            String sourceReference,
+            UUID sourceDocumentRevisionId,
+            UUID measurementId,
+            BigDecimal currentValue,
+            BigDecimal retention,
+            BigDecimal otherDeductions) {
         var contract = requireContract(projectId, contractId);
         var item = requireItem(projectId, contractId, contractItemId);
         financialAccessService.requireContractParty(
@@ -151,22 +182,55 @@ public class CommercialService {
             scopeService.requireEnabledCapability(projectId, item.scopeId(), "VALUATION");
         }
 
+        BigDecimal value;
+        BigDecimal acceptedQuantity = null;
+        UUID directEvidenceRevision = sourceDocumentRevisionId;
+        String effectiveSourceType;
+        String effectiveSourceReference;
+
         if (item.valuationMethod().equals("QUANTITY_RATE")) {
-            throw conflict("QUANTITY_RATE valuation requires the typed Verification/Measurement foundation; "
-                    + "accepted quantity cannot be supplied as free-form billing input");
-        }
-        if (sourceDocumentRevisionId == null) {
-            throw bad("Non-quantity valuation requires sourceDocumentRevisionId as controlled supporting evidence");
-        }
-        var evidence = repository.findRevisionEvidence(sourceDocumentRevisionId, projectId);
-        if (evidence == null) {
-            throw bad("sourceDocumentRevisionId must belong to the same project");
-        }
-        if (item.scopeId() != null && evidence.scopeId() != null && !item.scopeId().equals(evidence.scopeId())) {
-            throw bad("Valuation evidence revision belongs to a different project scope than the contract item");
+            if (measurementId == null) {
+                throw bad("QUANTITY_RATE valuation requires measurementId from accepted verification truth");
+            }
+            if (sourceDocumentRevisionId != null || currentValue != null) {
+                throw bad("QUANTITY_RATE valuation value/evidence are derived from measurement; do not submit currentValue or direct document evidence");
+            }
+            var measurement = verificationService.acceptedMeasurementForValuation(projectId, measurementId);
+            if (!measurement.scopeId().equals(item.scopeId())) {
+                throw bad("Accepted measurement belongs to a different project scope than the contract item");
+            }
+            if (item.unit() == null || !item.unit().equalsIgnoreCase(measurement.unit())) {
+                throw bad("Accepted measurement unit must match the contract item unit");
+            }
+            BigDecimal alreadyValued = quantityValuationRepository.acceptedQuantityAlreadyValued(contractItemId);
+            BigDecimal cumulativeQuantity = alreadyValued.add(measurement.acceptedQuantity());
+            if (item.plannedQuantity() != null && cumulativeQuantity.compareTo(item.plannedQuantity()) > 0) {
+                throw bad("Cumulative accepted quantity cannot exceed contract item planned quantity");
+            }
+            acceptedQuantity = scale(measurement.acceptedQuantity());
+            value = acceptedQuantity.multiply(item.rate()).setScale(4, RoundingMode.HALF_UP);
+            directEvidenceRevision = null;
+            effectiveSourceType = "ACCEPTED_MEASUREMENT";
+            effectiveSourceReference = "measurement://" + projectId + "/" + measurementId;
+        } else {
+            if (measurementId != null) {
+                throw bad("measurementId is applicable only to QUANTITY_RATE valuation");
+            }
+            if (sourceDocumentRevisionId == null) {
+                throw bad("Non-quantity valuation requires sourceDocumentRevisionId as controlled supporting evidence");
+            }
+            var evidence = repository.findRevisionEvidence(sourceDocumentRevisionId, projectId);
+            if (evidence == null) {
+                throw bad("sourceDocumentRevisionId must belong to the same project");
+            }
+            if (item.scopeId() != null && evidence.scopeId() != null && !item.scopeId().equals(evidence.scopeId())) {
+                throw bad("Valuation evidence revision belongs to a different project scope than the contract item");
+            }
+            value = positive(currentValue, "currentValue");
+            effectiveSourceType = code(sourceType, "sourceType");
+            effectiveSourceReference = optional(sourceReference);
         }
 
-        BigDecimal value = positive(currentValue, "currentValue");
         BigDecimal prior = repository.listValuations(contractId).stream()
                 .filter(existing -> existing.contractItemId().equals(contractItemId))
                 .filter(existing -> !existing.status().equals("VOID"))
@@ -183,11 +247,15 @@ public class CommercialService {
             throw bad("Retention and deductions cannot exceed current valuation value");
         }
 
-        return toView(repository.insertValuation(
+        var valuation = repository.insertValuation(
                 projectId, contractId, item.scopeId(), contractItemId,
-                code(valuationNumber, "valuationNumber"), code(sourceType, "sourceType"),
-                optional(sourceReference), sourceDocumentRevisionId, item.unit(), null, item.rate(),
-                value, prior, value, cumulative, normalizedRetention, deductions, eligible, actorUserId));
+                code(valuationNumber, "valuationNumber"), effectiveSourceType,
+                effectiveSourceReference, directEvidenceRevision, item.unit(), acceptedQuantity, item.rate(),
+                value, prior, value, cumulative, normalizedRetention, deductions, eligible, actorUserId);
+        if (measurementId != null) {
+            quantityValuationRepository.linkMeasurement(valuation.id(), measurementId);
+        }
+        return toView(valuation);
     }
 
     @Transactional(readOnly = true)
@@ -195,7 +263,7 @@ public class CommercialService {
         var contract = requireContract(projectId, contractId);
         financialAccessService.requireContractView(
                 actorUserId, projectId, contract.payerOrganizationId(), contract.payeeOrganizationId());
-        return repository.listValuations(contractId).stream().map(CommercialService::toView).toList();
+        return repository.listValuations(contractId).stream().map(this::toView).toList();
     }
 
     @Transactional
@@ -397,6 +465,18 @@ public class CommercialService {
                 .map(line -> {
                     var valuation = repository.requireValuation(line.valuationLineId());
                     var item = repository.requireItem(valuation.contractItemId());
+                    UUID measurementId = quantityValuationRepository.measurementId(valuation.id());
+                    if (measurementId != null) {
+                        var verificationTrace = verificationService.traceForMeasurement(projectId, measurementId);
+                        EvidenceView primaryEvidence = verificationTrace.evidence().isEmpty()
+                                ? null
+                                : evidenceView(verificationTrace.evidence().getFirst());
+                        return new PaymentTraceLine(
+                                line.id(), line.claimedValue(), line.certifiedValue(), line.certificationReason(),
+                                toView(valuation), toView(item), primaryEvidence,
+                                verificationTrace.verificationPackage().id(), measurementId,
+                                "ACCEPTED_MEASUREMENT_TYPED_TRACE_COMPLETE", verificationTrace);
+                    }
                     var evidence = repository.findRevisionEvidence(valuation.sourceDocumentRevisionId(), projectId);
                     EvidenceView evidenceView = evidence == null ? null : new EvidenceView(
                             evidence.revisionId(), evidence.documentId(), evidence.documentNumber(), evidence.title(),
@@ -404,10 +484,15 @@ public class CommercialService {
                     return new PaymentTraceLine(
                             line.id(), line.claimedValue(), line.certifiedValue(), line.certificationReason(),
                             toView(valuation), toView(item), evidenceView,
-                            null, null,
-                            "VerificationPackage/Measurement links become typed FKs when those foundations are implemented");
+                            null, null, "DIRECT_CONTROLLED_DOCUMENT_REVISION", null);
                 }).toList();
         return new PaymentTrace(toView(payment), toView(contract), toView(app), lines);
+    }
+
+    private static EvidenceView evidenceView(VerificationService.EvidenceView evidence) {
+        return new EvidenceView(
+                evidence.documentRevisionId(), evidence.documentId(), evidence.documentNumber(), evidence.title(),
+                evidence.revisionCode(), evidence.revisionStatus(), evidence.contentSha256(), evidence.scopeId());
     }
 
     private boolean canViewContract(UUID actorUserId, CommercialRepository.ContractRow contract) {
@@ -528,11 +613,12 @@ public class CommercialService {
                 row.dueDate(), row.status(), row.version());
     }
 
-    private static ValuationView toView(CommercialRepository.ValuationRow row) {
+    private ValuationView toView(CommercialRepository.ValuationRow row) {
         return new ValuationView(row.id(), row.projectId(), row.contractId(), row.scopeId(), row.contractItemId(),
                 row.valuationNumber(), row.sourceType(), row.sourceReference(), row.sourceDocumentRevisionId(),
-                row.unit(), row.acceptedQuantity(), row.rate(), row.grossValue(), row.priorValue(), row.currentValue(),
-                row.cumulativeValue(), row.retention(), row.otherDeductions(), row.eligibleValue(), row.status(), row.version());
+                quantityValuationRepository.measurementId(row.id()), row.unit(), row.acceptedQuantity(), row.rate(),
+                row.grossValue(), row.priorValue(), row.currentValue(), row.cumulativeValue(), row.retention(),
+                row.otherDeductions(), row.eligibleValue(), row.status(), row.version());
     }
 
     private static PaymentApplicationView toView(CommercialRepository.PaymentApplicationRow row) {
@@ -562,10 +648,11 @@ public class CommercialService {
                                    BigDecimal contractValue, LocalDate dueDate, String status, long version) {}
     public record ValuationView(UUID id, UUID projectId, UUID contractId, UUID scopeId, UUID contractItemId,
                                 String valuationNumber, String sourceType, String sourceReference,
-                                UUID sourceDocumentRevisionId, String unit, BigDecimal acceptedQuantity, BigDecimal rate,
-                                BigDecimal grossValue, BigDecimal priorValue, BigDecimal currentValue,
-                                BigDecimal cumulativeValue, BigDecimal retention, BigDecimal otherDeductions,
-                                BigDecimal eligibleValue, String status, long version) {}
+                                UUID sourceDocumentRevisionId, UUID measurementId, String unit,
+                                BigDecimal acceptedQuantity, BigDecimal rate, BigDecimal grossValue,
+                                BigDecimal priorValue, BigDecimal currentValue, BigDecimal cumulativeValue,
+                                BigDecimal retention, BigDecimal otherDeductions, BigDecimal eligibleValue,
+                                String status, long version) {}
     public record PaymentApplicationView(UUID id, UUID projectId, UUID contractId, String applicationNumber,
                                          LocalDate periodFrom, LocalDate periodTo, LocalDate dueDate,
                                          BigDecimal claimedAmount, BigDecimal certifiedAmount, String status,
@@ -588,7 +675,7 @@ public class CommercialService {
     public record PaymentTraceLine(UUID applicationLineId, BigDecimal claimedValue, BigDecimal certifiedValue,
                                    String certificationReason, ValuationView valuation, ContractItemView contractItem,
                                    EvidenceView controlledEvidence, UUID verificationPackageId, UUID measurementId,
-                                   String verificationMappingStatus) {}
+                                   String verificationMappingStatus, VerificationService.TraceView verificationTrace) {}
     public record PaymentTrace(PaymentView payment, ContractView contract,
                                PaymentApplicationView paymentApplication, List<PaymentTraceLine> lines) {}
 }
