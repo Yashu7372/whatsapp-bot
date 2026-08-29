@@ -81,8 +81,8 @@ public class CommercialController {
         return ResponseEntity.ok(service.createValuation(
                 principal.userId(), projectId, request.contractId(), request.contractItemId(),
                 request.valuationNumber(), request.sourceType(), request.sourceReference(),
-                request.sourceDocumentRevisionId(), request.currentValue(), request.retention(),
-                request.otherDeductions()));
+                request.sourceDocumentRevisionId(), request.measurementId(), request.currentValue(),
+                request.retention(), request.otherDeductions()));
     }
 
     @GetMapping("/valuations")
@@ -192,8 +192,8 @@ public class CommercialController {
             BigDecimal plannedQuantity, BigDecimal rate, BigDecimal contractValue, LocalDate dueDate) {}
     public record CreateValuationRequest(
             UUID contractId, UUID contractItemId, String valuationNumber, String sourceType,
-            String sourceReference, UUID sourceDocumentRevisionId, BigDecimal currentValue,
-            BigDecimal retention, BigDecimal otherDeductions) {}
+            String sourceReference, UUID sourceDocumentRevisionId, UUID measurementId,
+            BigDecimal currentValue, BigDecimal retention, BigDecimal otherDeductions) {}
     public record CreatePaymentApplicationRequest(
             UUID contractId, String applicationNumber, LocalDate periodFrom, LocalDate periodTo,
             LocalDate dueDate, UUID sourceDocumentRevisionId) {}
