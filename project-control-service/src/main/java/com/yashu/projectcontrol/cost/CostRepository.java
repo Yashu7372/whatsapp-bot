@@ -4,8 +4,10 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
+import java.sql.Timestamp;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -28,7 +30,7 @@ class CostRepository {
             String structureType) {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
-        jdbc.update("""
+        update("""
                 insert into cost_structures(
                     id,project_id,owning_organization_id,contract_id,code,name,structure_type,
                     status,version,created_at,updated_at)
@@ -79,7 +81,7 @@ class CostRepository {
             String category,
             int sortOrder) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into cost_nodes(
                     id,cost_structure_id,parent_cost_node_id,code,name,category,sort_order,status,created_at)
                 values(?,?,?,?,?,?,?,'ACTIVE',?)
@@ -123,7 +125,7 @@ class CostRepository {
 
     ScopeLinkRow insertScopeLink(UUID nodeId, UUID scopeId, BigDecimal allocationPercent, String relationshipType) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into cost_node_scope_links(id,cost_node_id,scope_id,allocation_percent,relationship_type,created_at)
                 values(?,?,?,?,?,?)
                 """, id, nodeId, scopeId, allocationPercent, relationshipType, Instant.now());
@@ -165,7 +167,7 @@ class CostRepository {
             UUID createdBy) {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
-        jdbc.update("""
+        update("""
                 insert into budget_versions(
                     id,project_id,owning_organization_id,cost_structure_id,version_number,status,baseline_type,
                     currency,created_by_user_id,version,created_at,updated_at)
@@ -189,7 +191,7 @@ class CostRepository {
 
     BudgetLineRow insertBudgetLine(UUID budgetId, UUID nodeId, UUID scopeId, BigDecimal amount, String notes) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into budget_lines(id,budget_version_id,cost_node_id,scope_id,amount,notes,created_at)
                 values(?,?,?,?,?,?,?)
                 """, id, budgetId, nodeId, scopeId, amount, notes, Instant.now());
@@ -209,14 +211,14 @@ class CostRepository {
     int transitionBudget(UUID budgetId, long expectedVersion, String fromStatus, String toStatus, UUID actor) {
         Instant now = Instant.now();
         if (toStatus.equals("SUBMITTED")) {
-            return jdbc.update("""
+            return update("""
                     update budget_versions
                     set status='SUBMITTED',submitted_by_user_id=?,submitted_at=?,version=version+1,updated_at=?
                     where id=? and status=? and version=?
                     """, actor, now, now, budgetId, fromStatus, expectedVersion);
         }
         if (toStatus.equals("APPROVED")) {
-            return jdbc.update("""
+            return update("""
                     update budget_versions
                     set status='APPROVED',approved_by_user_id=?,approved_at=?,version=version+1,updated_at=?
                     where id=? and status=? and version=?
@@ -226,7 +228,7 @@ class CostRepository {
     }
 
     void supersedePreviousApprovedBudget(UUID structureId, UUID exceptBudgetId) {
-        jdbc.update("""
+        update("""
                 update budget_versions
                 set status='SUPERSEDED',version=version+1,updated_at=?
                 where cost_structure_id=? and id<>? and status='APPROVED' and baseline_type<>'FORECAST'
@@ -346,7 +348,7 @@ class CostRepository {
             UUID sourceRevisionId,
             UUID createdBy) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into commitments(
                     id,project_id,owning_organization_id,counterparty_organization_id,contract_id,scope_id,cost_node_id,
                     commitment_reference,committed_amount,currency,status,committed_at,source_document_revision_id,
@@ -389,7 +391,7 @@ class CostRepository {
             UUID createdBy) {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
-        jdbc.update("""
+        update("""
                 insert into actual_cost_entries(
                     id,project_id,owning_organization_id,scope_id,cost_node_id,commitment_id,source_type,source_reference,
                     counterparty_organization_id,amount,currency,accounting_date,status,posted_at,source_document_revision_id,
@@ -402,7 +404,7 @@ class CostRepository {
     }
 
     void supersedeForecast(UUID projectId, UUID owningOrganizationId, UUID nodeId, LocalDate period) {
-        jdbc.update("""
+        update("""
                 update forecast_entries set status='SUPERSEDED',version=version+1,updated_at=?
                 where project_id=? and owning_organization_id=? and cost_node_id=? and forecast_period=? and status='ACTIVE'
                 """, Instant.now(), projectId, owningOrganizationId, nodeId, period);
@@ -421,7 +423,7 @@ class CostRepository {
             UUID createdBy) {
         UUID id = UUID.randomUUID();
         Instant now = Instant.now();
-        jdbc.update("""
+        update("""
                 insert into forecast_entries(
                     id,project_id,owning_organization_id,scope_id,cost_node_id,forecast_period,remaining_forecast_amount,
                     currency,basis,status,source_document_revision_id,version,created_by_user_id,created_at,updated_at)
@@ -449,7 +451,7 @@ class CostRepository {
             String reason,
             UUID actor) {
         UUID id = UUID.randomUUID();
-        jdbc.update("""
+        update("""
                 insert into budget_control_decisions(
                     id,project_id,scope_id,owning_organization_id,cost_node_id,request_resource_reference,
                     current_budget,actual,open_commitment,remaining_forecast,proposed_exposure,available_before,
@@ -475,6 +477,13 @@ class CostRepository {
                 "select count(*) from contracts where id=? and project_id=?",
                 Integer.class, contractId, projectId);
         return count != null && count > 0;
+    }
+
+    private int update(String sql, Object... args) {
+        Object[] normalized = Arrays.stream(args)
+                .map(arg -> arg instanceof Instant instant ? Timestamp.from(instant) : arg)
+                .toArray();
+        return jdbc.update(sql, normalized);
     }
 
     private BigDecimal amount(String sql, Object... args) {
