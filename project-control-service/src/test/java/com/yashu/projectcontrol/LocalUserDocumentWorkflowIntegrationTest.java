@@ -32,6 +32,7 @@ import static com.yashu.projectcontrol.access.ProjectAccessService.AccessOutcome
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assertions.assertTrue;
 
 @SpringBootTest
 @ActiveProfiles("test")
@@ -51,7 +52,7 @@ class LocalUserDocumentWorkflowIntegrationTest {
     @Autowired DocumentWorkflowService documentWorkflowService;
 
     @Test
-    void realItrResponsibilitiesAndScopedVisibilityAreEnforced() {
+    void realItrResponsibilitiesWorkflowDesignAndScopedVisibilityAreEnforced() {
         var workspace = workspaceService.create("LOCAL-USERS", "Local user flow workspace");
         var project = projectService.create(
                 workspace.id(), "LOCAL-USERS-A", "Local user flow project", null,
@@ -89,6 +90,8 @@ class LocalUserDocumentWorkflowIntegrationTest {
                 "test:re", "re@test.demo", "Consultant RE", "CONSULTANT_RE", "APPROVE");
         var viewer = userFor(identityService, consultant.id(), consultantParticipant.id(), project.id(), mep.id(),
                 "test:viewer", "viewer@test.demo", "Scoped Viewer", "VIEWER", "VIEW");
+        var hiddenViewer = userFor(identityService, consultant.id(), consultantParticipant.id(), project.id(), mep.id(),
+                "test:hidden-viewer", "hidden-viewer@test.demo", "Hidden Scoped Viewer", "HIDDEN_VIEWER", "VIEW");
 
         assertEquals(ALLOW, accessService.decide(site.id(), DOCUMENT_SUBMIT, project.id(), mep.id()).outcome());
         assertEquals(ALLOW, accessService.decide(viewer.id(), DOCUMENT_VIEW, project.id(), mep.id()).outcome());
@@ -97,6 +100,19 @@ class LocalUserDocumentWorkflowIntegrationTest {
         assertEquals(DENY, accessService.decide(viewer.id(), WORKFLOW_ACT, project.id(), mep.id()).outcome());
         assertEquals(DENY, accessService.decide(viewer.id(), SCOPE_VIEW, project.id(), civil.id()).outcome());
         assertEquals(DENY, accessService.decide(site.id(), WORKFLOW_CONFIGURE, project.id(), mep.id()).outcome());
+        assertEquals(DENY, accessService.decide(qce.id(), WORKFLOW_CONFIGURE, project.id(), mep.id()).outcome());
+        assertEquals(ALLOW, accessService.decide(admin.id(), WORKFLOW_CONFIGURE, project.id(), mep.id()).outcome());
+
+        var workflowOptions = accessService.workflowConfigurationOptions(admin.id(), project.id(), mep.id());
+        assertTrue(workflowOptions.assignments().stream()
+                .anyMatch(option -> option.responsibilityCode().equals("QCE")
+                        && option.partyRole().equals("SUBCONTRACTOR")
+                        && option.accessLevel().equals("APPROVE")));
+        assertTrue(workflowOptions.enabledCapabilities().contains("DOCUMENT_CONTROL"));
+        assertTrue(workflowOptions.enabledCapabilities().contains("INSPECTION"));
+        assertTrue(workflowOptions.completionActions().contains("APPROVE"));
+        assertThrows(ResponseStatusException.class,
+                () -> accessService.workflowConfigurationOptions(qce.id(), project.id(), mep.id()));
 
         accessService.requireCanRepresentOrganization(site.id(), project.id(), contractor.id());
         assertThrows(ResponseStatusException.class,
@@ -130,6 +146,8 @@ class LocalUserDocumentWorkflowIntegrationTest {
                 site.id(), document.id(), definition.id(), "ITR-001",
                 "CHW installation verification", "{\"revision\":\"A\"}");
         assertEquals("SITE_TEAM", instance.currentStep().stepCode());
+        assertEquals(1, documentWorkflowService.listForDocument(viewer.id(), document.id()).size());
+        assertEquals(0, documentWorkflowService.listForDocument(hiddenViewer.id(), document.id()).size());
 
         instance = executionService.act(site.id(), instance.id(), "COMPLETE_STEP", "SUBMIT", null,
                 "Raised by site team", "{}");
@@ -156,7 +174,6 @@ class LocalUserDocumentWorkflowIntegrationTest {
         instance = executionService.act(re.id(), instance.id(), "COMPLETE_STEP", "APPROVE", null,
                 "Final approval", "{}");
         assertEquals("COMPLETED", instance.status());
-        assertEquals(1, documentWorkflowService.listForDocument(viewer.id(), document.id()).size());
     }
 
     private IdentityService.UserView userFor(
@@ -179,8 +196,11 @@ class LocalUserDocumentWorkflowIntegrationTest {
 
     private void addStep(java.util.UUID definitionId, int sequence, String code, String name,
                          String action, String responsibility) {
+        String visibleResponsibilities = "[\"SITE_TEAM\",\"QCE\",\"QC_DC\",\"CONSULTANT_INSPECTOR\",\"CONSULTANT_RE\",\"VIEWER\"]";
         workflowService.addStep(
                 definitionId, sequence, code, name, action,
-                "{\"responsibility\":\"" + responsibility + "\"}", "{}");
+                "{\"act\":{\"responsibilityCodes\":[\"" + responsibility
+                        + "\"]},\"view\":{\"responsibilityCodes\":" + visibleResponsibilities + "}}",
+                "{}");
     }
 }
