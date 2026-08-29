@@ -95,19 +95,11 @@ Commercial billing remains a separate chain:
 
 `Contract -> Contract Item -> Valuation -> Payment Application / IPC -> Certification -> Payment`
 
-Milestone, lump-sum, percentage, time-based and other non-quantity valuations can use a controlled `DocumentRevision` as supporting evidence. Quantity-rate valuation fails closed until the typed Verification Package + Measurement foundation exists; accepted quantity is not accepted as free-form billing input.
-
-Payment reverse trace currently reaches:
-
-`Payment -> Payment Application -> Valuation -> Contract Item -> controlled Document Revision`
-
-The trace explicitly reserves `VerificationPackage` and `Measurement` positions without inventing weak target-type/target-id links. When those frozen domains are implemented, their typed foreign keys will complete the chain:
-
-`Evidence -> Verification Package -> Accepted Measurement -> Valuation -> IPC -> Payment`
+Milestone, lump-sum, percentage, time-based and other non-quantity valuations can use a controlled `DocumentRevision` as supporting evidence. Quantity-rate valuation is measurement-backed as described in Foundation 08; accepted quantity is never accepted as a free-form billing value.
 
 The project financial drill-down is a read-model composition rather than another ledger:
 
-`Project -> Scope -> direct cost facts`
+`Project -> Scope -> direct cost + verification/measurement facts`
 
 `Project -> CBS -> Cost Node -> linked Scopes -> budget/exposure`
 
@@ -116,6 +108,49 @@ The project financial drill-down is a read-model composition rather than another
 Contract values are never added to organization-private internal cost totals. The caller must choose an explicit organization perspective.
 
 Cash flow is also derived, not authoritative storage. Monthly views expose posted internal cost, remaining forecast, certified receivable/payable and actual payment cash in/out separately. Posted accounting cost is not treated as cash movement.
+
+### Foundation 08 — Verification, accepted measurement and payment provenance
+
+Verification is an optional scope capability and remains independent from any ITR/MIR-specific domain model.
+
+`Project Scope -> Verification Package -> Subject Items + Controlled Evidence`
+
+A package records the submitting organization/user, claimed progress or quantity, immutable `DocumentRevision` evidence, and a typed link to the existing generic workflow. Decisions are append-only and preserve the acting user, acting organization, workflow instance, comments and subject version.
+
+Supported terminal outcomes include:
+
+- `ACCEPTED`
+- `ACCEPTED_WITH_COMMENTS`
+- `PARTIALLY_ACCEPTED`
+- `REJECTED`
+- `RETURNED_FOR_REWORK`
+- `MORE_EVIDENCE_REQUESTED`
+
+A corrected/resubmitted package uses `parent_package_id`; the earlier attempt is never overwritten.
+
+For measurable work:
+
+`Verification Decision -> Measurement`
+
+Measurement preserves submitted quantity, measured quantity, accepted quantity, rejected/rework quantity, unit, measurement period, verifier, package/item/decision provenance and version. Only accepted quantity from a completed accepted/partially accepted verification can be used commercially.
+
+Quantity-rate valuation is deterministic:
+
+`Accepted Measurement.quantity x Contract Item.rate = Valuation Line.currentValue`
+
+The caller cannot submit an arbitrary quantity value or substitute a document revision for accepted measurement truth. A typed `valuation_lines.measurement_id` foreign key and `(contract_item_id, measurement_id)` uniqueness prevent one accepted measurement from being valued twice for the same contract item.
+
+The completed typed reverse trace is:
+
+`Payment -> Payment Application / IPC -> IPC Line -> Valuation Line -> Accepted Measurement -> Verification Package -> Subject Work/Deliverable Reference -> Controlled Evidence / Document Revision -> Verification Decisions -> Users / Organizations -> Generic Workflow`
+
+Non-quantity valuation remains valid without inventing measurement: milestone/lump-sum/percentage/time-based valuation can trace directly to its controlled supporting `DocumentRevision`.
+
+The canonical integration proof demonstrates the frozen CHW scenario:
+
+`320 m submitted -> 300 m accepted + 20 m rework -> child verification accepts 20 m -> 320 m accepted in two immutable measurements -> AED 400/m valuation -> IPC -> certification -> payment -> reverse provenance trace`
+
+The verification-to-workflow foreign key is deferrable until transaction commit because workflow creation is JPA-backed while the typed verification link is JDBC-backed in the same transaction. Referential integrity is still enforced by PostgreSQL after the persistence context flushes.
 
 ## Local authentication
 
