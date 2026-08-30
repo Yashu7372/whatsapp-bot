@@ -13,7 +13,7 @@ CREATE TABLE document_evidence_snapshots (
     CONSTRAINT fk_document_evidence_document FOREIGN KEY (document_id) REFERENCES documents(id),
     CONSTRAINT fk_document_evidence_revision FOREIGN KEY (revision_id) REFERENCES document_revisions(id),
     CONSTRAINT ck_document_evidence_sha256 CHECK (
-        input_content_sha256 IS NULL OR input_content_sha256 ~ '^[0-9a-f]{64}$'
+        input_content_sha256 IS NULL OR LENGTH(input_content_sha256) = 64
     )
 );
 
