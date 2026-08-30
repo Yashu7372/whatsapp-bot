@@ -18,6 +18,17 @@ project-control:
     base-url: ${PROJECT_CONTROL_AI_BASE_URL:https://api.openai.com/v1}
     api-key: ${PROJECT_CONTROL_AI_API_KEY:}
     model: ${PROJECT_CONTROL_AI_MODEL:gpt-5-mini}
+  whatsapp:
+    enabled: ${PROJECT_CONTROL_WHATSAPP_ENABLED:false}
+    verify-token: ${WHATSAPP_VERIFY_TOKEN:}
+    access-token: ${WHATSAPP_ACCESS_TOKEN:}
+    phone-number-id: ${WHATSAPP_PHONE_NUMBER_ID:}
+    api-version: ${WHATSAPP_API_VERSION:}
+    app-secret: ${WHATSAPP_APP_SECRET:}
+    local-user-email: ${PROJECT_CONTROL_WHATSAPP_USER_EMAIL:}
+    local-user-number: ${PROJECT_CONTROL_WHATSAPP_USER_NUMBER:}
+    notification-scan-ms: ${PROJECT_CONTROL_WHATSAPP_NOTIFICATION_SCAN_MS:5000}
+    notification-initial-delay-ms: ${PROJECT_CONTROL_WHATSAPP_NOTIFICATION_INITIAL_DELAY_MS:5000}
 
 server:
   port: ${PORT:8080}
