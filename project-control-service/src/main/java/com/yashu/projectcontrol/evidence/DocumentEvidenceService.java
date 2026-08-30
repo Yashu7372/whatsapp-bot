@@ -2,6 +2,8 @@ package com.yashu.projectcontrol.evidence;
 
 import com.yashu.projectcontrol.access.ProjectAccessService;
 import com.yashu.projectcontrol.document.DocumentService;
+import com.yashu.projectcontrol.intelligence.ProjectIntelligenceSignal;
+import com.yashu.projectcontrol.intelligence.ProjectIntelligenceSignalPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -31,16 +33,19 @@ public class DocumentEvidenceService {
     private final DocumentService documentService;
     private final ProjectAccessService accessService;
     private final ObjectMapper objectMapper;
+    private final ProjectIntelligenceSignalPublisher intelligenceSignals;
 
     public DocumentEvidenceService(
             DocumentEvidenceSnapshotRepository repository,
             DocumentService documentService,
             ProjectAccessService accessService,
-            ObjectMapper objectMapper) {
+            ObjectMapper objectMapper,
+            ProjectIntelligenceSignalPublisher intelligenceSignals) {
         this.repository = repository;
         this.documentService = documentService;
         this.accessService = accessService;
         this.objectMapper = objectMapper;
+        this.intelligenceSignals = intelligenceSignals;
     }
 
     @Transactional
@@ -68,6 +73,17 @@ public class DocumentEvidenceService {
                 revision.contentSha256(),
                 normalizedEvidence,
                 userId.toString()));
+
+        intelligenceSignals.publish(new ProjectIntelligenceSignal(
+                document.projectId(),
+                document.primaryScopeId(),
+                "DOCUMENT_EVIDENCE_RECORDED",
+                "DOCUMENT_REVISION",
+                revisionId,
+                "document-evidence:" + saved.getId(),
+                intelligencePayload(saved),
+                saved.getCreatedAt()));
+
         return toView(saved);
     }
 
@@ -103,6 +119,20 @@ public class DocumentEvidenceService {
         return text;
     }
 
+    private String intelligencePayload(DocumentEvidenceSnapshot snapshot) {
+        try {
+            return objectMapper.writeValueAsString(new EvidenceRecordedSignal(
+                    snapshot.getId(),
+                    snapshot.getDocumentId(),
+                    snapshot.getRevisionId(),
+                    snapshot.getExtractorCode(),
+                    snapshot.getExtractorVersion(),
+                    snapshot.getInputContentSha256()));
+        } catch (Exception ex) {
+            throw new IllegalStateException("Could not serialize document evidence intelligence signal", ex);
+        }
+    }
+
     private static String requireText(String value, String field) {
         if (value == null || value.isBlank()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, field + " is required");
@@ -126,6 +156,15 @@ public class DocumentEvidenceService {
                 snapshot.getEvidenceJson(),
                 snapshot.getCreatedByReference(),
                 snapshot.getCreatedAt());
+    }
+
+    private record EvidenceRecordedSignal(
+            UUID evidenceSnapshotId,
+            UUID documentId,
+            UUID revisionId,
+            String extractorCode,
+            String extractorVersion,
+            String inputContentSha256) {
     }
 
     public record EvidenceView(
