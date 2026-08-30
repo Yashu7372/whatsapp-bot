@@ -1,6 +1,7 @@
 package com.yashu.projectcontrol.commercial;
 
 import com.yashu.projectcontrol.financial.FinancialAccessService;
+import com.yashu.projectcontrol.intelligence.ProjectIntelligenceSignalPublisher;
 import com.yashu.projectcontrol.project.ProjectService;
 import com.yashu.projectcontrol.scope.ScopeService;
 import com.yashu.projectcontrol.verification.VerificationService;
@@ -26,6 +27,7 @@ public class CommercialService {
     private final ScopeService scopeService;
     private final FinancialAccessService financialAccessService;
     private final VerificationService verificationService;
+    private final ProjectIntelligenceSignalPublisher intelligenceSignals;
 
     public CommercialService(
             CommercialRepository repository,
@@ -33,13 +35,15 @@ public class CommercialService {
             ProjectService projectService,
             ScopeService scopeService,
             FinancialAccessService financialAccessService,
-            VerificationService verificationService) {
+            VerificationService verificationService,
+            ProjectIntelligenceSignalPublisher intelligenceSignals) {
         this.repository = repository;
         this.quantityValuationRepository = quantityValuationRepository;
         this.projectService = projectService;
         this.scopeService = scopeService;
         this.financialAccessService = financialAccessService;
         this.verificationService = verificationService;
+        this.intelligenceSignals = intelligenceSignals;
     }
 
     @Transactional
@@ -355,7 +359,17 @@ public class CommercialService {
         if (repository.submitApplication(applicationId, expectedVersion, actorUserId) != 1) {
             throw conflict("Payment application is stale or is not DRAFT");
         }
-        return toView(repository.requireApplication(applicationId));
+        var submitted = repository.requireApplication(applicationId);
+        intelligenceSignals.publish(
+                projectId,
+                null,
+                "PAYMENT_APPLICATION_SUBMITTED",
+                "PAYMENT_APPLICATION",
+                submitted.id(),
+                "payment-application-submitted:" + submitted.id(),
+                paymentApplicationSignal(submitted),
+                submitted.submittedAt() == null ? Instant.now() : submitted.submittedAt());
+        return toView(submitted);
     }
 
     @Transactional
@@ -393,7 +407,17 @@ public class CommercialService {
         if (repository.certifyApplication(applicationId, expectedVersion, actorUserId) != 1) {
             throw conflict("Payment application is stale or is no longer SUBMITTED");
         }
-        return toView(repository.requireApplication(applicationId));
+        var certified = repository.requireApplication(applicationId);
+        intelligenceSignals.publish(
+                projectId,
+                null,
+                "PAYMENT_APPLICATION_CERTIFIED",
+                "PAYMENT_APPLICATION",
+                certified.id(),
+                "payment-application-certified:" + certified.id(),
+                paymentApplicationSignal(certified),
+                certified.certifiedAt() == null ? Instant.now() : certified.certifiedAt());
+        return toView(certified);
     }
 
     @Transactional
@@ -426,10 +450,20 @@ public class CommercialService {
                 scopeService.requireEnabledCapability(projectId, valuation.scopeId(), "PAYMENT");
             }
         }
-        return toView(repository.insertPayment(
+        var payment = repository.insertPayment(
                 projectId, contract.id(), applicationId, code(paymentReference, "paymentReference"), normalized,
                 contract.currency(), paidAt == null ? Instant.now() : paidAt,
-                contract.payerOrganizationId(), contract.payeeOrganizationId(), sourceDocumentRevisionId, actorUserId));
+                contract.payerOrganizationId(), contract.payeeOrganizationId(), sourceDocumentRevisionId, actorUserId);
+        intelligenceSignals.publish(
+                projectId,
+                null,
+                "PAYMENT_RECORDED",
+                "PAYMENT",
+                payment.id(),
+                "payment-recorded:" + payment.id(),
+                paymentSignal(payment),
+                payment.paidAt());
+        return toView(payment);
     }
 
     @Transactional(readOnly = true)
@@ -554,6 +588,32 @@ public class CommercialService {
         return currency;
     }
 
+    private static PaymentApplicationActivitySignal paymentApplicationSignal(
+            CommercialRepository.PaymentApplicationRow row) {
+        return new PaymentApplicationActivitySignal(
+                row.contractId(),
+                row.applicationNumber(),
+                row.periodFrom(),
+                row.periodTo(),
+                row.dueDate(),
+                row.claimedAmount(),
+                row.certifiedAmount(),
+                row.status(),
+                row.version());
+    }
+
+    private static PaymentActivitySignal paymentSignal(CommercialRepository.PaymentRow row) {
+        return new PaymentActivitySignal(
+                row.contractId(),
+                row.paymentApplicationId(),
+                row.paymentReference(),
+                row.amount(),
+                row.currency(),
+                row.paidAt(),
+                row.status(),
+                row.version());
+    }
+
     private static BigDecimal positive(BigDecimal value, String field) {
         if (value == null || value.signum() <= 0) throw bad(field + " must be greater than zero");
         return scale(value);
@@ -637,6 +697,29 @@ public class CommercialService {
         return new PaymentView(row.id(), row.projectId(), row.contractId(), row.paymentApplicationId(),
                 row.paymentReference(), row.amount(), row.currency(), row.paidAt(), row.payerOrganizationId(),
                 row.payeeOrganizationId(), row.status(), row.sourceDocumentRevisionId(), row.version());
+    }
+
+    private record PaymentApplicationActivitySignal(
+            UUID contractId,
+            String applicationNumber,
+            LocalDate periodFrom,
+            LocalDate periodTo,
+            LocalDate dueDate,
+            BigDecimal claimedAmount,
+            BigDecimal certifiedAmount,
+            String status,
+            long version) {
+    }
+
+    private record PaymentActivitySignal(
+            UUID contractId,
+            UUID paymentApplicationId,
+            String paymentReference,
+            BigDecimal amount,
+            String currency,
+            Instant paidAt,
+            String status,
+            long version) {
     }
 
     public record ContractView(UUID id, UUID projectId, UUID payerParticipantId, UUID payeeParticipantId,

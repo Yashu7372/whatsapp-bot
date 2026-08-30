@@ -1,5 +1,6 @@
 package com.yashu.projectcontrol.workflow;
 
+import com.yashu.projectcontrol.intelligence.ProjectIntelligenceSignalPublisher;
 import com.yashu.projectcontrol.project.ProjectService;
 import com.yashu.projectcontrol.scope.ScopeService;
 import org.springframework.http.HttpStatus;
@@ -23,6 +24,7 @@ public class WorkflowService {
     private final WorkflowActionRepository actionRepository;
     private final ProjectService projectService;
     private final ScopeService scopeService;
+    private final ProjectIntelligenceSignalPublisher intelligenceSignals;
 
     public WorkflowService(
             WorkflowDefinitionRepository definitionRepository,
@@ -32,7 +34,8 @@ public class WorkflowService {
             WorkflowStepInstanceRepository stepInstanceRepository,
             WorkflowActionRepository actionRepository,
             ProjectService projectService,
-            ScopeService scopeService) {
+            ScopeService scopeService,
+            ProjectIntelligenceSignalPublisher intelligenceSignals) {
         this.definitionRepository = definitionRepository;
         this.stepDefinitionRepository = stepDefinitionRepository;
         this.bindingRepository = bindingRepository;
@@ -41,6 +44,7 @@ public class WorkflowService {
         this.actionRepository = actionRepository;
         this.projectService = projectService;
         this.scopeService = scopeService;
+        this.intelligenceSignals = intelligenceSignals;
     }
 
     @Transactional
@@ -215,7 +219,7 @@ public class WorkflowService {
         instance.moveTo(firstVisit.getId(), firstVisit.getStepSequence(), firstVisit.getStepCode());
         instanceRepository.save(instance);
 
-        actionRepository.save(WorkflowAction.create(
+        WorkflowAction startAction = actionRepository.save(WorkflowAction.create(
                 instance.getId(),
                 firstVisit.getId(),
                 WorkflowAction.ActionType.START,
@@ -225,6 +229,16 @@ public class WorkflowService {
                 firstVisit.getStepCode(),
                 null,
                 "{}"));
+
+        intelligenceSignals.publish(
+                projectId,
+                scopeId,
+                "WORKFLOW_STARTED",
+                "WORKFLOW_INSTANCE",
+                instance.getId(),
+                "workflow-action:" + startAction.getId(),
+                workflowSignal(instance, definition, startAction),
+                startAction.getCreatedAt());
 
         return toInstanceView(instance, definition, firstVisit);
     }
@@ -346,7 +360,7 @@ public class WorkflowService {
                     "Unsupported workflow action type: " + type);
         }
 
-        actionRepository.save(WorkflowAction.create(
+        WorkflowAction persistedAction = actionRepository.save(WorkflowAction.create(
                 instance.getId(),
                 currentStep.getId(),
                 type,
@@ -356,6 +370,16 @@ public class WorkflowService {
                 toStep,
                 normalizedComment,
                 normalizedMetadata));
+
+        intelligenceSignals.publish(
+                instance.getProjectId(),
+                instance.getScopeId(),
+                "WORKFLOW_ACTION_RECORDED",
+                "WORKFLOW_INSTANCE",
+                instance.getId(),
+                "workflow-action:" + persistedAction.getId(),
+                workflowSignal(instance, definition, persistedAction),
+                persistedAction.getCreatedAt());
 
         WorkflowStepInstance activeStep = instance.getCurrentStepInstanceId() == null
                 ? null
@@ -410,6 +434,22 @@ public class WorkflowService {
         return definitionRepository.findByIdAndProjectId(definitionId, projectId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND,
                         "Workflow definition not found in project: " + definitionId));
+    }
+
+    private static WorkflowActivitySignal workflowSignal(
+            WorkflowInstance instance,
+            WorkflowDefinition definition,
+            WorkflowAction action) {
+        return new WorkflowActivitySignal(
+                definition.getId(),
+                definition.getCode(),
+                definition.getVersion(),
+                instance.getBusinessKey(),
+                instance.getStatus().name(),
+                action.getActionType().name(),
+                action.getActionCode(),
+                action.getFromStepCode(),
+                action.getToStepCode());
     }
 
     private static String normalizeCode(String value, String field) {
@@ -478,6 +518,18 @@ public class WorkflowService {
                 action.getActionType().name(), action.getActionCode(), action.getActorReference(),
                 action.getFromStepCode(), action.getToStepCode(), action.getComment(),
                 action.getMetadataJson(), action.getCreatedAt());
+    }
+
+    private record WorkflowActivitySignal(
+            UUID workflowDefinitionId,
+            String workflowCode,
+            int workflowVersion,
+            String businessKey,
+            String workflowStatus,
+            String actionType,
+            String actionCode,
+            String fromStepCode,
+            String toStepCode) {
     }
 
     public record DefinitionView(
