@@ -38,7 +38,6 @@ public class OpenAiCompatibleProjectControlReasoningWorker implements ProjectCon
     private final String model;
 
     public OpenAiCompatibleProjectControlReasoningWorker(
-            RestClient.Builder builder,
             @Value("${project-control.ai.base-url:https://api.openai.com/v1}") String baseUrl,
             @Value("${project-control.ai.api-key:}") String apiKey,
             @Value("${project-control.ai.model:gpt-5-mini}") String model) {
@@ -46,7 +45,7 @@ public class OpenAiCompatibleProjectControlReasoningWorker implements ProjectCon
             throw new IllegalStateException(
                     "project-control.ai.enabled=true requires PROJECT_CONTROL_AI_API_KEY/project-control.ai.api-key");
         }
-        this.restClient = builder
+        this.restClient = RestClient.builder()
                 .baseUrl(baseUrl)
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + apiKey.trim())
                 .build();
