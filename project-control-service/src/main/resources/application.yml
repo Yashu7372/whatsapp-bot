@@ -12,5 +12,12 @@ spring:
   flyway:
     enabled: true
 
+project-control:
+  ai:
+    enabled: ${PROJECT_CONTROL_AI_ENABLED:false}
+    base-url: ${PROJECT_CONTROL_AI_BASE_URL:https://api.openai.com/v1}
+    api-key: ${PROJECT_CONTROL_AI_API_KEY:}
+    model: ${PROJECT_CONTROL_AI_MODEL:gpt-5-mini}
+
 server:
   port: ${PORT:8080}
