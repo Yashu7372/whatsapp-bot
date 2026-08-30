@@ -72,7 +72,7 @@ public class OpenAiCompatibleProjectControlReasoningWorker implements ProjectCon
         if (response == null
                 || response.get("choices") == null
                 || !response.get("choices").isArray()
-                || response.get("choices").isEmpty()
+                || response.get("choices").size() == 0
                 || response.get("choices").get(0).get("message") == null
                 || response.get("choices").get(0).get("message").get("content") == null) {
             throw new IllegalStateException("Reasoning provider returned no message content");
