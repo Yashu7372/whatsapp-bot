@@ -1,0 +1,69 @@
+name: project-control-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${PROJECT_CONTROL_POSTGRES_DB:-project_control}
+      POSTGRES_USER: ${PROJECT_CONTROL_POSTGRES_USER:-project_control}
+      POSTGRES_PASSWORD: ${PROJECT_CONTROL_POSTGRES_PASSWORD:-project_control_local}
+    ports:
+      - "127.0.0.1:${PROJECT_CONTROL_POSTGRES_PORT:-5433}:5432"
+    volumes:
+      - project_control_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${PROJECT_CONTROL_POSTGRES_USER:-project_control} -d ${PROJECT_CONTROL_POSTGRES_DB:-project_control}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  project-control-backend:
+    build:
+      context: ./project-control-service
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      DB_URL: jdbc:postgresql://postgres:5432/${PROJECT_CONTROL_POSTGRES_DB:-project_control}
+      DB_USERNAME: ${PROJECT_CONTROL_POSTGRES_USER:-project_control}
+      DB_PASSWORD: ${PROJECT_CONTROL_POSTGRES_PASSWORD:-project_control_local}
+      PORT: 8080
+      PROJECT_CONTROL_AI_ENABLED: ${PROJECT_CONTROL_AI_ENABLED:-false}
+      PROJECT_CONTROL_AI_BASE_URL: ${PROJECT_CONTROL_AI_BASE_URL:-https://api.openai.com/v1}
+      PROJECT_CONTROL_AI_API_KEY: ${PROJECT_CONTROL_AI_API_KEY:-}
+      PROJECT_CONTROL_AI_MODEL: ${PROJECT_CONTROL_AI_MODEL:-gpt-5-mini}
+      PROJECT_CONTROL_WHATSAPP_ENABLED: ${PROJECT_CONTROL_WHATSAPP_ENABLED:-false}
+      WHATSAPP_VERIFY_TOKEN: ${WHATSAPP_VERIFY_TOKEN:-}
+      WHATSAPP_ACCESS_TOKEN: ${WHATSAPP_ACCESS_TOKEN:-}
+      WHATSAPP_PHONE_NUMBER_ID: ${WHATSAPP_PHONE_NUMBER_ID:-}
+      WHATSAPP_API_VERSION: ${WHATSAPP_API_VERSION:-}
+      WHATSAPP_APP_SECRET: ${WHATSAPP_APP_SECRET:-}
+      PROJECT_CONTROL_WHATSAPP_USER_EMAIL: ${PROJECT_CONTROL_WHATSAPP_USER_EMAIL:-inspector@local.demo}
+      PROJECT_CONTROL_WHATSAPP_USER_NUMBER: ${PROJECT_CONTROL_WHATSAPP_USER_NUMBER:-}
+      PROJECT_CONTROL_WHATSAPP_NOTIFICATION_SCAN_MS: ${PROJECT_CONTROL_WHATSAPP_NOTIFICATION_SCAN_MS:-5000}
+      PROJECT_CONTROL_WHATSAPP_NOTIFICATION_INITIAL_DELAY_MS: ${PROJECT_CONTROL_WHATSAPP_NOTIFICATION_INITIAL_DELAY_MS:-5000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:${PROJECT_CONTROL_BACKEND_PORT:-8080}:8080"
+
+  project-control-ui:
+    build:
+      context: ${PROJECT_CONTROL_UI_CONTEXT:-../whatsapp-crm/project-control-ui}
+    restart: unless-stopped
+    depends_on:
+      - project-control-backend
+    ports:
+      - "127.0.0.1:${PROJECT_CONTROL_UI_PORT:-5174}:80"
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    profiles: ["tunnel"]
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run --token ${CLOUDFLARE_TUNNEL_TOKEN}
+    depends_on:
+      - project-control-backend
+
+volumes:
+  project_control_postgres:
