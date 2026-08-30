@@ -2,6 +2,7 @@ target/
 .idea/
 *.iml
 .env
+.env.project-control
 .DS_Store
 .git
 local-uploads/
