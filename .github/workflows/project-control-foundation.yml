@@ -6,10 +6,16 @@ on:
       - feature/project-control-modulith-foundation
     paths:
       - 'project-control-service/**'
+      - 'docker-compose.project-control.yml'
+      - '.env.project-control.example'
+      - 'docs/PROJECT_CONTROL_LOCAL_CLOUDFLARE.md'
       - '.github/workflows/project-control-foundation.yml'
   pull_request:
     paths:
       - 'project-control-service/**'
+      - 'docker-compose.project-control.yml'
+      - '.env.project-control.example'
+      - 'docs/PROJECT_CONTROL_LOCAL_CLOUDFLARE.md'
       - '.github/workflows/project-control-foundation.yml'
 
 jobs:
@@ -47,3 +53,5 @@ jobs:
           cache: maven
       - name: Verify foundation
         run: mvn -B clean verify
+      - name: Build Java 21 container
+        run: docker build -t project-control-backend:ci .
