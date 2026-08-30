@@ -11,11 +11,9 @@ public class WhatsAppGraphClient {
 
     private static final int MAX_TEXT_LENGTH = 4000;
 
-    private final RestClient.Builder restClientBuilder;
     private final WhatsAppChannelProperties properties;
 
-    public WhatsAppGraphClient(RestClient.Builder restClientBuilder, WhatsAppChannelProperties properties) {
-        this.restClientBuilder = restClientBuilder;
+    public WhatsAppGraphClient(WhatsAppChannelProperties properties) {
         this.properties = properties;
     }
 
@@ -29,7 +27,7 @@ public class WhatsAppGraphClient {
             text = text.substring(0, MAX_TEXT_LENGTH - 3) + "...";
         }
 
-        RestClient client = restClientBuilder
+        RestClient client = RestClient.builder()
                 .baseUrl("https://graph.facebook.com")
                 .defaultHeader(HttpHeaders.AUTHORIZATION, "Bearer " + properties.accessToken())
                 .build();
