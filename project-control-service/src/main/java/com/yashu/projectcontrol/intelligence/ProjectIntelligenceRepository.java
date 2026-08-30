@@ -6,6 +6,8 @@ import org.springframework.stereotype.Repository;
 
 import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
@@ -46,9 +48,9 @@ class ProjectIntelligenceRepository {
                     .param("subjectId", signal.subjectId())
                     .param("triggerKey", signal.triggerKey())
                     .param("payloadJson", signal.payloadJson())
-                    .param("occurredAt", signal.occurredAt())
-                    .param("createdAt", now)
-                    .param("updatedAt", now)
+                    .param("occurredAt", dbTime(signal.occurredAt()))
+                    .param("createdAt", dbTime(now))
+                    .param("updatedAt", dbTime(now))
                     .update();
             return id;
         } catch (DuplicateKeyException ex) {
@@ -91,11 +93,13 @@ class ProjectIntelligenceRepository {
                         rs.getObject("subject_id", UUID.class),
                         rs.getString("trigger_key"),
                         rs.getString("payload_json"),
-                        rs.getTimestamp("occurred_at").toInstant(),
+                        rs.getObject("occurred_at", OffsetDateTime.class).toInstant(),
                         rs.getString("status"),
                         rs.getInt("attempt_count"),
-                        rs.getTimestamp("claimed_at") == null ? null : rs.getTimestamp("claimed_at").toInstant(),
-                        rs.getTimestamp("completed_at") == null ? null : rs.getTimestamp("completed_at").toInstant(),
+                        rs.getObject("claimed_at", OffsetDateTime.class) == null
+                                ? null : rs.getObject("claimed_at", OffsetDateTime.class).toInstant(),
+                        rs.getObject("completed_at", OffsetDateTime.class) == null
+                                ? null : rs.getObject("completed_at", OffsetDateTime.class).toInstant(),
                         rs.getString("last_error")))
                 .optional();
     }
@@ -141,7 +145,7 @@ class ProjectIntelligenceRepository {
                         WHERE id = :id AND status = 'RUNNING'
                         """)
                 .param("id", id)
-                .param("nextAttemptAt", nextAttemptAt)
+                .param("nextAttemptAt", dbTime(nextAttemptAt))
                 .param("lastError", truncate(error, 2000))
                 .update();
     }
@@ -173,7 +177,7 @@ class ProjectIntelligenceRepository {
                         WHERE status = 'RUNNING'
                           AND claimed_at < :staleBefore
                         """)
-                .param("staleBefore", staleBefore)
+                .param("staleBefore", dbTime(staleBefore))
                 .update();
     }
 
@@ -226,10 +230,10 @@ class ProjectIntelligenceRepository {
                 .param("featureVersion", feature.featureVersion())
                 .param("valueJson", feature.valueJson())
                 .param("confidence", BigDecimal.valueOf(feature.confidence()))
-                .param("observedAt", feature.observedAt() == null ? signal.occurredAt() : feature.observedAt())
+                .param("observedAt", dbTime(feature.observedAt() == null ? signal.occurredAt() : feature.observedAt()))
                 .param("triggerType", signal.triggerType())
                 .param("jobId", jobId)
-                .param("createdAt", Instant.now())
+                .param("createdAt", dbTime(Instant.now()))
                 .update();
     }
 
@@ -272,7 +276,7 @@ class ProjectIntelligenceRepository {
                 .param("methodVersion", finding.methodVersion())
                 .param("confidence", BigDecimal.valueOf(finding.confidence()))
                 .param("jobId", jobId)
-                .param("createdAt", Instant.now())
+                .param("createdAt", dbTime(Instant.now()))
                 .update();
         return id;
     }
@@ -301,6 +305,10 @@ class ProjectIntelligenceRepository {
                 .query(Long.class)
                 .single();
         return count == null ? 0 : count;
+    }
+
+    private static OffsetDateTime dbTime(Instant instant) {
+        return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
     private static String truncate(String value, int max) {

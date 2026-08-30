@@ -12,6 +12,8 @@ import org.springframework.jdbc.core.simple.JdbcClient;
 import org.springframework.test.context.ActiveProfiles;
 
 import java.time.Instant;
+import java.time.OffsetDateTime;
+import java.time.ZoneOffset;
 import java.time.temporal.ChronoUnit;
 import java.util.UUID;
 
@@ -89,10 +91,10 @@ class ProjectIntelligenceFoundationIntegrationTest {
                 .param("subjectId", revisionId)
                 .param("triggerKey", triggerKey)
                 .param("payloadJson", "{\"evidenceSnapshotId\":\"" + UUID.randomUUID() + "\"}")
-                .param("occurredAt", now.minus(10, ChronoUnit.MINUTES))
-                .param("claimedAt", now.minus(10, ChronoUnit.MINUTES))
-                .param("createdAt", now.minus(10, ChronoUnit.MINUTES))
-                .param("updatedAt", now.minus(10, ChronoUnit.MINUTES))
+                .param("occurredAt", dbTime(now.minus(10, ChronoUnit.MINUTES)))
+                .param("claimedAt", dbTime(now.minus(10, ChronoUnit.MINUTES)))
+                .param("createdAt", dbTime(now.minus(10, ChronoUnit.MINUTES)))
+                .param("updatedAt", dbTime(now.minus(10, ChronoUnit.MINUTES)))
                 .update();
 
         coordinator.recoverIncompleteJobs();
@@ -138,6 +140,10 @@ class ProjectIntelligenceFoundationIntegrationTest {
         }
         Long value = query.query(Long.class).single();
         return value == null ? 0L : value;
+    }
+
+    private static OffsetDateTime dbTime(Instant instant) {
+        return OffsetDateTime.ofInstant(instant, ZoneOffset.UTC);
     }
 
     private record Fixture(UUID projectId, UUID scopeId) {
