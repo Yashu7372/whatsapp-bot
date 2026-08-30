@@ -113,6 +113,6 @@ public class WhatsAppWebhookController {
 
     private static String text(JsonNode node, String field) {
         JsonNode value = node == null ? null : node.get(field);
-        return value == null || value.isNull() ? "" : value.asString("");
+        return value == null || value.isNull() ? "" : value.asString();
     }
 }
