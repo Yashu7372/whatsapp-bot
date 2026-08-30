@@ -146,7 +146,15 @@ public class WhatsAppChannelRepository {
                         .param("updatedAt", Timestamp.from(Instant.now()))
                         .update();
             } catch (DuplicateKeyException ex) {
-                setActiveContext(channelIdentityId, workflowInstanceId);
+                jdbc.sql("""
+                        UPDATE channel_contexts
+                           SET active_workflow_instance_id = :workflowId, updated_at = :updatedAt
+                         WHERE channel_identity_id = :identityId
+                        """)
+                        .param("workflowId", workflowInstanceId)
+                        .param("updatedAt", Timestamp.from(Instant.now()))
+                        .param("identityId", channelIdentityId)
+                        .update();
             }
         }
     }
@@ -168,6 +176,7 @@ public class WhatsAppChannelRepository {
     public Optional<InboundMessage> claimInbound(
             UUID channelIdentityId, String providerMessageId, String messageText) {
         if (providerMessageId == null || providerMessageId.isBlank()) return Optional.empty();
+        String messageId = providerMessageId.trim();
         UUID id = UUID.randomUUID();
         try {
             jdbc.sql("""
@@ -179,13 +188,25 @@ public class WhatsAppChannelRepository {
                     """)
                     .param("id", id)
                     .param("identityId", channelIdentityId)
-                    .param("providerMessageId", providerMessageId.trim())
+                    .param("providerMessageId", messageId)
                     .param("messageText", messageText == null ? "" : messageText.trim())
                     .param("receivedAt", Timestamp.from(Instant.now()))
                     .update();
-            return Optional.of(new InboundMessage(id, providerMessageId.trim()));
+            return Optional.of(new InboundMessage(id, messageId));
         } catch (DuplicateKeyException ex) {
-            return Optional.empty();
+            return jdbc.sql("""
+                    SELECT id, provider_message_id
+                    FROM channel_inbound_messages
+                    WHERE provider_message_id = :providerMessageId
+                      AND channel_identity_id = :identityId
+                      AND status = 'RECEIVED'
+                    """)
+                    .param("providerMessageId", messageId)
+                    .param("identityId", channelIdentityId)
+                    .query((rs, rowNum) -> new InboundMessage(
+                            rs.getObject("id", UUID.class),
+                            rs.getString("provider_message_id")))
+                    .optional();
         }
     }
 
