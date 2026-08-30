@@ -38,11 +38,19 @@ class SecurityConfig {
         csrf.setCookiePath("/");
 
         http
-                .csrf(configurer -> configurer.csrfTokenRepository(csrf))
+                .csrf(configurer -> configurer
+                        .csrfTokenRepository(csrf)
+                        .ignoringRequestMatchers("/webhooks/whatsapp"))
                 .securityContext(configurer -> configurer.securityContextRepository(repository))
                 .sessionManagement(configurer -> configurer.sessionCreationPolicy(SessionCreationPolicy.IF_REQUIRED))
                 .authorizeHttpRequests(authorize -> authorize
-                        .requestMatchers("/api/auth/csrf", "/api/auth/login", "/actuator/health", "/error").permitAll()
+                        .requestMatchers(
+                                "/webhooks/whatsapp",
+                                "/api/auth/csrf",
+                                "/api/auth/login",
+                                "/actuator/health",
+                                "/error")
+                        .permitAll()
                         .anyRequest().authenticated())
                 .formLogin(form -> form.disable())
                 .httpBasic(basic -> basic.disable())
