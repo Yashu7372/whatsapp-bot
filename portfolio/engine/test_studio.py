@@ -61,7 +61,7 @@ class PortfolioStudioValidationTest(unittest.TestCase):
     def materialize(self, d: Path):
         (d / "article.md").write_text(("word " * 50).strip(), encoding="utf-8")
         (d / "linkedin.md").write_text(("word " * 20).strip(), encoding="utf-8")
-        (d / "visual-model.json").write_text('{"sections": []}\n', encoding="utf-8")
+        (d / "visual-model.json").write_text('{"schema_version": 1, "scenes": []}\n', encoding="utf-8")
         (d / "visual.html").write_text("<html><body>ok</body></html>\n", encoding="utf-8")
 
     def test_done_requires_every_stage(self):
