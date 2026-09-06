@@ -3,11 +3,13 @@ package com.yashu.projectcontrol.access;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
 import org.springframework.context.annotation.Profile;
+import org.springframework.core.annotation.Order;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Component;
 
 @Component
 @Profile("local")
+@Order(0)
 class LocalDemoAuthenticationBootstrap implements ApplicationRunner {
 
     private final IdentityService identityService;
