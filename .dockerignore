@@ -8,3 +8,6 @@ target/
 *.md
 cloudbuild.yaml
 deploy/
+docker-compose.project-controls.yml
+.env.example
+.env.project-control

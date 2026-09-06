@@ -7,3 +7,4 @@ target/
 .git
 local-uploads/
 .gitignore
+docker-compose.project-controls.yml
