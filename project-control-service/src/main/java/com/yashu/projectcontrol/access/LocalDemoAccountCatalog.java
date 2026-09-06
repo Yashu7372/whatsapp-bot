@@ -13,7 +13,9 @@ final class LocalDemoAccountCatalog {
             new AccountSpec("local:qcdc", "qcdc@local.demo", "Sara Ali · QC/DC", "qcdc"),
             new AccountSpec("local:inspector", "inspector@local.demo", "Daniel Lee · Consultant Inspector", "inspector"),
             new AccountSpec("local:re", "re@local.demo", "Omar Rahman · Consultant RE", "re"),
-            new AccountSpec("local:viewer", "viewer@local.demo", "Maya Joseph · Scoped Viewer", "viewer")
+            new AccountSpec("local:viewer", "viewer@local.demo", "Maya Joseph · Scoped Viewer", "viewer"),
+            new AccountSpec("local:contractor-qs", "contractor.qs@local.demo", "Farah Nasser · Contractor QS", "contractor-qs"),
+            new AccountSpec("local:client-qs", "client.qs@local.demo", "Lina Haddad · Client QS", "client-qs")
     );
 
     private LocalDemoAccountCatalog() {}
