@@ -10,5 +10,9 @@ spring:
   flyway:
     enabled: true
 
+project-control:
+  demo:
+    enabled: ${PROJECT_CONTROL_DEMO_ENABLED:true}
+
 server:
   port: ${PORT:8080}
