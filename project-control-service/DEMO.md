@@ -68,13 +68,23 @@ Project123!
 | Farah Nasser | `contractor.qs@local.demo` | Contractor QS / valuation and IPC preparation |
 | Lina Haddad | `client.qs@local.demo` | Client QS / certification and payment |
 
-## 3. Import the Postman collection
+## 3. Generate and import the Postman collection
 
-Import:
+The collection is generated from a checked-in, validated payload so the 71-request export remains reproducible without hand-editing generated JSON.
+
+From `project-control-service`:
+
+```bash
+python postman/generate_demo_collection.py
+```
+
+This writes:
 
 ```text
 postman/Project-Control-CHW-Demo.postman_collection.json
 ```
+
+Import that JSON into Postman.
 
 Default collection variables:
 
@@ -86,6 +96,8 @@ password = Project123!
 Run requests in folder order.
 
 Postman must keep cookies enabled because the new Project Control service uses a real Spring Security server-side session. The collection retrieves the CSRF token and refreshes it after each user switch.
+
+The generator validates the critical dynamic handoffs for the rework decision and second measurement before writing the collection.
 
 ## 4. Demo sequence
 
